@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+bridge-log-*.md
+usage-log.jsonl
+
+# Runtime caches
+.cache/
+phash_*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Build / dist
+dist/
+build/

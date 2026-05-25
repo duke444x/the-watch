@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capt. Crawl's Bridge · The Watch · B4E</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- atmospheric background layers -->
+  <div class="bg-layer bg-gradient" aria-hidden="true"></div>
+  <div class="bg-layer bg-compass" aria-hidden="true"></div>
+  <div class="bg-layer bg-grain" aria-hidden="true"></div>
+
+  <!-- HEADER ------------------------------------------------------------- -->
+  <header class="bridge-header">
+    <div class="header-brand">
+      <span class="anchor-glyph">⚓</span>
+      <div class="brand-stack">
+        <h1 class="wordmark">The Watch</h1>
+        <span class="brand-tag">Capt. Crawl · @Boons4ever</span><span class="brand-tag-aux">◆ Built on Kraken CLI</span>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div class="status-pill" id="connectionStatus">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting…</span>
+      </div>
+      <div class="time-display">
+        <span class="time-label">Bridge Time</span>
+        <span class="time-value" id="serverTime">—</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- TICKER BAR --------------------------------------------------------- -->
+  <section class="ticker-bar">
+    <article class="ticker" data-asset="HBAR">
+      <header class="ticker-head">
+        <span class="ticker-symbol">HBAR <span class="ticker-quote">/ USD</span></span>
+        <span class="ticker-context">Hedera · HBARbarians</span>
+      </header>
+      <div class="ticker-price" data-field="last">—</div>
+      <div class="ticker-detail">
+        <span class="ticker-change" data-field="change">—</span>
+        <span class="ticker-range" data-field="range">—</span>
+      </div>
+    </article>
+
+    <article class="ticker" data-asset="BTC">
+      <header class="ticker-head">
+        <span class="ticker-symbol">BTC <span class="ticker-quote">/ USD</span></span>
+        <span class="ticker-context">The Reserve · Benchmark</span>
+      </header>
+      <div class="ticker-price" data-field="last">—</div>
+      <div class="ticker-detail">
+        <span class="ticker-change" data-field="change">—</span>
+        <span class="ticker-range" data-field="range">—</span>
+      </div>
+    </article>
+
+    <article class="ticker" data-asset="DOG">
+      <header class="ticker-head">
+        <span class="ticker-symbol">DOG <span class="ticker-quote">/ USD</span></span>
+        <span class="ticker-context">DOG·GO·TO·THE·MOON · DOG Army</span>
+      </header>
+      <div class="ticker-price" data-field="last">—</div>
+      <div class="ticker-detail">
+        <span class="ticker-change" data-field="change">—</span>
+        <span class="ticker-range" data-field="range">—</span>
+      </div>
+    </article>
+  </section>
+
+  <!-- MAIN GRID ---------------------------------------------------------- -->
+  <main class="main-grid">
+
+    <!-- terminal panel -->
+    <section class="panel terminal-panel">
+      <header class="panel-header">
+        <div class="panel-title-row">
+          <span class="panel-eyebrow">Live Stream</span>
+          <h2 class="panel-title">The Bridge</h2>
+        </div>
+        <span class="kraken-chip"><span class="kraken-glyph">◆</span>Powered by <strong>Kraken CLI</strong></span><div class="panel-stepper" id="stepper" hidden>
+          <span class="stepper-cell" data-step="1">Tickers</span>
+          <span class="stepper-cell" data-step="2">Depth</span>
+          <span class="stepper-cell" data-step="3">Trend</span>
+          <span class="stepper-cell" data-step="4">Account</span>
+          <span class="stepper-cell" data-step="5">Decision</span>
+          <span class="stepper-cell" data-step="6">Log</span>
+          <span class="stepper-cell" data-step="7">Broadcast</span>
+        </div>
+      </header>
+
+      <div class="terminal-body" id="terminalBody">
+        <div class="terminal-placeholder">
+          <span class="placeholder-glyph">⟁</span>
+          Awaiting orders, Captain.<br>
+          Hit <em>Run Watch</em> to begin the next bridge log.
+        </div>
+      </div>
+
+      <footer class="panel-actions">
+        <button id="runBtn" type="button" class="primary-btn">
+          <span class="btn-glyph">▶</span>
+          <span class="btn-label">Run Watch</span>
+        </button>
+        <div class="action-divider"></div>
+        <label class="force-select-wrap">
+          <span class="select-label">Override</span>
+          <select id="forceMode" class="force-select">
+            <option value="">— None (organic decision) —</option>
+            <option value="HBARUSD:rail">Force ENTER · HBAR · rail</option>
+            <option value="HBARUSD:one_out">Force ENTER · HBAR · one out</option>
+            <option value="BTCUSD:rail">Force ENTER · BTC · rail</option>
+            <option value="DOGUSD:rail">Force ENTER · DOG · rail</option>
+          </select>
+        </label>
+      </footer>
+    </section>
+
+    <!-- bridge log card -->
+    <section class="panel log-card">
+      <header class="log-header">
+        <div class="captain-frame">
+          <img src="captcrawl.png" alt="Capt. Crawl" class="captain-avatar" onerror="this.style.display='none';this.nextElementSibling?.classList.add('no-avatar')">
+          <span class="captain-fallback" aria-hidden="true">🏴‍☠️</span>
+        </div>
+        <div class="log-meta">
+          <div class="log-author">
+            <span class="author-name">Capt. Crawl</span>
+            <span class="author-handle">@boons4ever</span>
+          </div>
+          <div class="log-title" id="logTitle">Latest Bridge Log</div>
+        </div>
+        <div class="log-pulse" id="logPulse" hidden>
+          <span class="pulse-dot"></span>
+          <span class="pulse-label">writing</span>
+        </div>
+      </header>
+
+      <div class="log-body" id="logBody">
+        <div class="log-placeholder">
+          The Captain hasn't filed a log this session yet.<br>
+          When he does, it lands here.
+        </div>
+      </div>
+
+      <footer class="log-footer">
+        <div class="trade-fields" id="tradeFields" hidden>
+          <div class="trade-field">
+            <span class="trade-label">Position</span>
+            <span class="trade-value" id="tradePair">—</span>
+          </div>
+          <div class="trade-field">
+            <span class="trade-label">Fill</span>
+            <span class="trade-value" id="tradeFill">—</span>
+          </div>
+          <div class="trade-field">
+            <span class="trade-label">Marker</span>
+            <span class="trade-value" id="tradeMarker">—</span>
+          </div>
+        </div>
+        <div class="discord-badge" id="discordBadge" hidden>
+          <span class="discord-glyph">◉</span>
+          <span class="discord-text">Broadcast to <em>#bridge-log</em></span>
+        </div>
+      </footer>
+    </section>
+
+  </main>
+
+  <!-- PLANK -------------------------------------------------------------- -->
+  <section class="plank-section">
+    <header class="plank-header">
+      <span class="plank-eyebrow">Position Exposure</span>
+      <h2 class="plank-title">The Plank</h2>
+      <span class="plank-current" id="plankCurrentLabel">Marker on the deck</span>
+    </header>
+    <div class="plank-track">
+      <div class="plank-board"></div>
+      <ol class="plank-positions" id="plankPositions">
+        <li class="plank-position is-current" data-pos="deck"><span class="pos-tick"></span><span class="pos-label">Deck</span></li>
+        <li class="plank-position" data-pos="the rail"><span class="pos-tick"></span><span class="pos-label">Rail</span></li>
+        <li class="plank-position" data-pos="one out"><span class="pos-tick"></span><span class="pos-label">One Out</span></li>
+        <li class="plank-position" data-pos="two out"><span class="pos-tick"></span><span class="pos-label">Two Out</span></li>
+        <li class="plank-position" data-pos="three out"><span class="pos-tick"></span><span class="pos-label">Three Out</span></li>
+        <li class="plank-position" data-pos="the edge"><span class="pos-tick"></span><span class="pos-label">The Edge</span></li>
+      </ol>
+      <div class="plank-marker" id="plankMarker">
+        <span class="marker-bauble"></span>
+        <span class="marker-stem"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER ------------------------------------------------------------- -->
+  <footer class="bridge-footer">
+    <div class="footer-row">
+      <span class="footer-mark">B4E</span>
+      <span class="footer-divider">·</span>
+      <span class="footer-line">Built on <strong>Kraken CLI</strong></span>
+      <span class="footer-divider">·</span>
+      <span class="footer-line">Paper trades only · Not financial advice</span>
+    </div>
+    <div class="footer-tag">Find us at <strong>@Boons4ever</strong> · For the Boons 🏴‍☠️</div>
+  </footer>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

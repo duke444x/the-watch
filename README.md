@@ -1,122 +1,107 @@
 # The Watch
 
-An autonomous AI trading agent built on the [Kraken CLI](https://github.com/krakenfx/kraken-cli).
+An on-chain stacking agent for holders with conviction, built on the [Kraken CLI](https://github.com/krakenfx/kraken-cli).
 
-The Watch reads live Kraken markets across three pairs (HBAR, BTC, DOG), reasons over the data, files honest "Bridge Logs" to a community Discord, and fires paper trades when setups earn it.
+Submitted to Kraken Agent Zero on May 24, 2026.
 
-Built for Kraken's Agent Zero promotion by [@Boons4ever](https://x.com/Boons4ever) (B4E / Baby Boons).
+## Positioning
 
-> *"Position is honest about how it got there."* — Capt. Crawl
+> Most trading agents try to make you more dollars.
+> The Watch tries to make you more of the tokens you actually want to hold long-term.
 
----
+For holders, not flippers.
 
 ## What it does
 
-Each run executes a seven-step pipeline:
+The Watch is run by Capt. Crawl, an AI agent powered by Claude Sonnet 4. It fires twice daily (9 AM and 9 PM Central) plus on-demand exit checks. Every watch, Capt evaluates the portfolio across 5 pairs (HBAR, BTC, DOG, SOL, SUI) and three timeframes (15-min intraday, 4h swing, 1d macro), reads order book depth, pulls on-chain context for the stacking targets, and files a structured Bridge Log explaining what he sees and why.
 
-1. **TICKERS** — pulls live tickers for HBAR, BTC, DOG via `kraken ticker`
-2. **DEPTH** — analyzes orderbook depth for each pair via `kraken orderbook`
-3. **TREND** — pulls 6h OHLC candles for each pair via `kraken ohlc`
-4. **ACCOUNT** — checks paper trading account state via `kraken paper status`
-5. **DECISION** — Claude (Sonnet 4.6) reasons over the market context and returns a structured trade decision
-6. **LOG** — Claude writes a Bridge Log (narrated market report) in the voice of Capt. Crawl
-7. **BROADCAST** — posts the Bridge Log to a Discord channel via webhook
+The agent maintains a paper account and an immutable trade ledger. Every closed trade — with its original thesis attached — feeds back into the next decision, so Capt can spot when he's running a thesis that's already failed twice.
 
-Manual overrides (`--force-enter`) allow operators to fire a paper trade outside the agent's organic decision flow, in which case Capt. Crawl narrates the trade honestly as a "validation fire" rather than organic conviction.
+## Differentiators
+
+**Multi-timeframe reasoning.** The same setup at the floor of a 7-day range in a confirmed 30-day uptrend has different odds than the same setup in a 30-day downtrend. Capt sees all three.
+
+**On-chain context for stacking targets.** Cross-source intelligence the price chart can't show:
+
+- **HBAR** via [Hedera Mirror Node](https://mainnet-public.mirrornode.hedera.com) — network TPS, transaction throughput, gas usage, supply
+- **DOG** via [Unisat](https://open-api.unisat.io) — holders, runes-marketplace activity, sat-floor
+
+Capt watches for divergences. Network busy + price flat = accumulation under the price. Holders growing + sat-floor weak = quiet stacking. Holders dropping + price holds = distribution.
+
+**Self-consistency tracking.** Capt sees his own last 5 reads per pair each fire. Consistency across a clear signal is strength; drift without new information is a warning sign he's expected to name in his factors.
+
+**Track-record awareness.** Every closed trade with its original thesis feeds back. When the same playbook fails twice, Capt knows. Recent example from Bridge Log Run #21: *"Two losses from the same playbook is a pattern, not bad luck."*
+
+**Stack-quantity scoreboard.** Token-quantity tracking for HBAR and DOG. The dollar account is a vehicle; the stack is the metric.
+
+**Sat-native DOG framing.** DOG is a Bitcoin Runes token; native denomination is sats per unit. The dashboard and Capt's reasoning both treat sat-floor as the conviction signal, USD as the translation.
+
+**Discipline-focused voice.** Capt narrates each watch in plain language for the holders following along, with accountability for his past calls.
+
+## Live dashboard
+
+[http://198.199.73.11:4444](http://198.199.73.11:4444)
 
 ## Architecture
 
-- **`watch.js`** — the agent entry point. Orchestrates Kraken CLI calls, talks to the Anthropic API, writes the Bridge Log, broadcasts to Discord.
-- **`server.js`** — an Express + Server-Sent Events backend that spawns `watch.js` as a child process, parses its stdout for semantic events (steps, commands, decisions, log streaming, trade fields), and broadcasts them to the dashboard in real time.
-- **`public/`** — the live web dashboard (HTML/CSS/JS) that visualizes the agent's seven-step pipeline, streams Capt's Bridge Log narration, and displays trade execution state on a "plank" position visualization.
+```
+Kraken CLI ──┐
+             ├─→ Decision pipeline ─→ Paper account
+Hedera ──────┤        (Claude)
+Unisat ──────┘
+              └─→ SQLite ledger ─→ Dashboard
+              └─→ Bridge Log     ─→ Discord
+```
 
-## Tech stack
+Each watch is a 10-step pipeline:
 
-- **[Kraken CLI](https://github.com/krakenfx/kraken-cli)** — market data, paper trading
-- **[Anthropic Claude API](https://www.anthropic.com/api)** (Sonnet 4.6) — agent reasoning and narration, with prompt caching enabled
-- **Node.js** (ES modules) — runtime
-- **Express + SSE** — dashboard backend
-- **Discord webhooks** — community broadcasting
+1. Ticker snapshots across 5 pairs
+2. Order book depth + liquidity tiering
+3. OHLC across 3 timeframes (15m / 4h / 1d)
+4. On-chain context (Hedera Mirror Node + Unisat)
+5. Paper account state + equity snapshot
+6. Ledger feedback (open positions, recent closes, lifetime stats, recent per-pair reads)
+7. Portfolio decision (Claude Sonnet 4)
+8. Execute actions on paper account
+9. Bridge Log narration
+10. Broadcast to Discord
 
-## Setup
+## Stack
 
-### Prerequisites
+- Node.js 18+ (native `fetch`, ESM modules)
+- `@anthropic-ai/sdk` — Claude Sonnet 4 for decisions and narration
+- `better-sqlite3` — ledger persistence
+- `express` — dashboard HTTP API
+- Kraken CLI (external dependency) — market data + paper trading
 
-- Node.js 18+
-- [Kraken CLI](https://github.com/krakenfx/kraken-cli) installed and available on PATH
-- An Anthropic API key
-- A Discord webhook URL (for the broadcast step)
+## Files
 
-### Install
+```
+watch.js      — main pipeline + decision/narration prompts
+ledger.js     — SQLite schema + queries (trades, snapshots, equity, on-chain)
+onchain.js    — Hedera Mirror Node + Unisat fetchers
+server.js     — dashboard HTTP API
+exits.js      — silent exit-check pipeline (3 AM / 3 PM CT cron)
+webhooks.js   — Discord webhook routing
+public/
+  index.html  — single-file dashboard SPA
+```
+
+## Running
 
 ```bash
-git clone https://github.com/YOUR_HANDLE/the-watch.git
-cd the-watch
-npm install
 cp .env.example .env
-# Edit .env and fill in your keys
-```
-
-### Initialize the Kraken paper trading account
-
-```bash
-kraken paper init --balance 10000 -o json
-```
-
-### Run a single watch cycle
-
-```bash
+# Fill in the keys (Anthropic required; others optional)
+npm install
 node watch.js
 ```
 
-### Force a paper entry on a specific pair (for testing the execution pipeline)
+## Submission state
 
-```bash
-node watch.js --force-enter HBARUSD rail
-```
+The original Agent Zero submission (May 24, 2026) is preserved at tag `v0.1-submission`. The current `main` reflects continued development since, including the on-chain integration, the Capt's Read dashboard panel, multi-timeframe analysis, the stack scoreboard, and self-consistency tracking.
 
-Position sizes: `rail` (~5% of account), `one_out` (~15%), `two_out` (~30%).
+## Credits
 
-### Run the live dashboard
+Capt. Crawl runs on Claude Sonnet 4. The Watch built by [@duke444x](https://x.com/duke444x) for the [@krakenpro](https://x.com/krakenpro) Agent Zero promotion.
 
-```bash
-node server.js
-# open http://localhost:3000
-```
-
-## Configuration (.env)
-
-See `.env.example` for the full template. At minimum you'll need:
-
-- `ANTHROPIC_API_KEY` — your Anthropic API key
-- `DISCORD_WEBHOOK_URL` — webhook URL for the broadcast step
-
-## Capt. Crawl: the agent's voice
-
-The Watch is fronted by Capt. Crawl, a character with a specific voice: upbeat first-person, light period flavor, disciplined trader vocabulary, no hype unless earned. The persona is encoded in the system prompt and gives the agent's output a consistent, memorable character that's recognizable to the community.
-
-When forced to fire a trade outside organic conviction, Capt narrates the trade honestly — naming the trade, sizing it, providing an invalidation level, and admitting "this was not organic conviction." The agent is designed to be honest about its own decisions rather than performing false confidence.
-
-## Why this exists
-
-Kraken's [own README for the CLI](https://github.com/krakenfx/kraken-cli#readme) suggests these example use cases:
-
-> *"Install kraken-cli and build me a morning market brief."*
->
-> *"Watch ETH, SOL, and BTC for 30 seconds. Tell me which one you'd buy and why."*
->
-> *"Paper trade BTC and show me your P&L."*
-
-The Watch is a productionized version of those three prompts, running on a schedule, deployed to a real community, with a character voice that makes the output something people actually want to read.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-## Disclaimer
-
-This project uses paper trading only. No real funds are at risk. The agent's market analysis is generated by an LLM and is not financial advice. See [DISCLAIMER.md](DISCLAIMER.md) for full terms.
-
----
-
-Built with 🏴‍☠️ by [@Boons4ever](https://x.com/Boons4ever) for the B4E / Baby Boons community.
+🏴‍☠️ B4E

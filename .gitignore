@@ -1,28 +1,29 @@
 # Dependencies
 node_modules/
+package-lock.json
 
 # Environment / secrets
 .env
 .env.local
 .env.*.local
 
-# Logs
+# Runtime data
+data/
 logs/
-*.log
-bridge-log-*.md
-usage-log.jsonl
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
-# Runtime caches
-.cache/
-phash_*.json
+# Pause flag
+.pause
 
-# OS / editor
+# OS
 .DS_Store
 Thumbs.db
+
+# Editor
 .vscode/
 .idea/
 *.swp
-
-# Build / dist
-dist/
-build/
+*.swo

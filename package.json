@@ -1,40 +1,20 @@
 {
-  "name": "the-watch",
+  "name": "watch",
   "version": "1.0.0",
-  "description": "An autonomous AI trading agent built on the Kraken CLI. Reads live markets, reasons, files Bridge Logs to a community Discord, and fires paper trades when setups earn it.",
-  "type": "module",
   "main": "watch.js",
+  "type": "module",
   "scripts": {
-    "watch": "node watch.js",
-    "dashboard": "node server.js",
-    "force-hbar": "node watch.js --force-enter HBARUSD rail",
-    "force-btc": "node watch.js --force-enter BTCUSD rail",
-    "force-dog": "node watch.js --force-enter DOGUSD rail"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "kraken",
-    "kraken-cli",
-    "ai-agent",
-    "autonomous-agent",
-    "claude",
-    "anthropic",
-    "trading",
-    "crypto",
-    "paper-trading",
-    "discord"
-  ],
-  "author": "Duke (@Boons4ever / B4E)",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/duke444x/the-watch.git"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
+    "better-sqlite3": "^11.10.0",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "node-cron": "^4.2.1"
   }
 }

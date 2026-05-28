@@ -25,6 +25,7 @@ import { spawn } from 'child_process';
 import dotenv from 'dotenv';
 import Ledger from './ledger.js';
 import { evaluatePositions, computePnl, reasonLabel } from './exits.js';
+import { fetchOnchainContext } from './onchain.js';
 import { postMarkerUpdate, postAdminEvent } from './webhooks.js';
 
 dotenv.config({ quiet: true });
@@ -291,9 +292,33 @@ async function main() {
       try {
         const paperStatus = await runKraken(['paper', 'status', '-o', 'json']);
         ledger.recordEquitySnapshot(runId, paperStatus);
-        logDetail(`Equity snapshot: $${paperStatus.current_value.toFixed(2)} (${(paperStatus.unrealized_pnl_pct * 100).toFixed(2)}%)`);
+        // NOTE: unrealized_pnl_pct from kraken is already in percentage terms
+        // (e.g. -0.5416 means -0.5416%), so display it directly — do NOT
+        // multiply by 100. This matches watch.js's display of the same field.
+        // (Previous code multiplied by 100, showing -54.16% for a -0.54% loss.)
+        logDetail(`Equity snapshot: $${paperStatus.current_value.toFixed(2)} (${paperStatus.unrealized_pnl_pct.toFixed(4)}%)`);
       } catch (e) {
         logWarn(`Equity snapshot failed: ${e.message}`);
+      }
+    }
+
+    // On-chain snapshot — same cadence and best-effort pattern as the equity
+    // snapshot above. Runs on every exit-check (3 AM / 3 PM CT) so the HBAR
+    // and DOG baselines accumulate ~4 samples/day instead of 2, making the
+    // 7-day divergence reads far more reliable (a real divergence stands out;
+    // single-window noise gets smoothed). Pure data fetch — no LLM, no trading
+    // decisions, no Bridge Log. Never blocks the run finalize.
+    if (ledger && runId) {
+      try {
+        const onchain = await fetchOnchainContext({
+          unisatApiKey: process.env.UNISAT_API_KEY || null,
+        });
+        ledger.recordOnchainSnapshot(runId, onchain);
+        const hbarState = onchain.hbar?.ok ? 'ok' : 'down';
+        const dogState  = onchain.dog?.ok ? 'ok' : 'down';
+        logDetail(`On-chain snapshot recorded (HBAR ${hbarState}, DOG ${dogState})`);
+      } catch (e) {
+        logWarn(`On-chain snapshot failed: ${e.message}`);
       }
     }
 

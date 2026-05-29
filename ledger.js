@@ -140,6 +140,27 @@ CREATE TABLE IF NOT EXISTS plank_walks (
 );
 CREATE INDEX IF NOT EXISTS idx_plank_walks_ts ON plank_walks(ts_utc);
 
+CREATE TABLE IF NOT EXISTS theses (
+  thesis_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id          INTEGER NOT NULL,
+  ts_utc          TEXT    NOT NULL,
+  pair            TEXT    NOT NULL,
+  kind            TEXT    NOT NULL DEFAULT 'entry_watch',
+  direction       TEXT,
+  level_low       REAL,
+  level_high      REAL,
+  note            TEXT,
+  state           TEXT    NOT NULL DEFAULT 'watching',
+  trade_id        INTEGER,
+  reached_run_id  INTEGER,
+  resolved_run_id INTEGER,
+  updated_ts_utc  TEXT,
+  FOREIGN KEY (run_id)   REFERENCES runs(run_id),
+  FOREIGN KEY (trade_id) REFERENCES trades(trade_id)
+);
+CREATE INDEX IF NOT EXISTS idx_theses_pair  ON theses(pair);
+CREATE INDEX IF NOT EXISTS idx_theses_state ON theses(state);
+
 -- Per-pair structured read each run (one row per pair per run, even on holds).
 -- Powers the "Capt's Read" dashboard panel -- shows stance + confidence +
 -- multi-timeframe signal alignment + Capt's two short reasoning factors for
@@ -328,6 +349,22 @@ export default class Ledger {
            total_trades, biggest_winner_usd, biggest_chop_usd,
            reason, ended_at_run_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+
+      // ---- theses (Capt's watched levels — the chart's watch layer) ----
+      insertThesis: this.db.prepare(`
+        INSERT INTO theses
+          (run_id, ts_utc, pair, kind, direction, level_low, level_high, note, state, updated_ts_utc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?)
+      `),
+      findOpenThesis: this.db.prepare(`
+        SELECT * FROM theses
+        WHERE pair = ? AND direction = ? AND state = 'watching'
+        ORDER BY ts_utc DESC LIMIT 1
+      `),
+      touchThesis: this.db.prepare(`
+        UPDATE theses SET updated_ts_utc = ?, note = COALESCE(?, note)
+        WHERE thesis_id = ?
       `),
 
       // ---- reads ----
@@ -626,6 +663,38 @@ export default class Ledger {
       reason,
       endedAtRunId || null,
     );
+  }
+
+  // Record/refresh Capt's watched levels for this run. Each pair_read may carry
+  // an optional watch_level { price, direction, note }. A thesis PERSISTS across
+  // watches: if Capt is still watching a level he already flagged (same pair +
+  // direction, price within 0.5%, still 'watching'), we touch updated_ts rather
+  // than spawn a duplicate. A genuinely new level inserts a fresh thesis. State
+  // transitions (reached/entered/exited) are handled outside this method.
+  recordTheses(runId, pairReads) {
+    if (!pairReads || typeof pairReads !== 'object') return 0;
+    const ts = nowUtc();
+    const PRICE_TOL = 0.005;
+    let touched = 0;
+    const txn = this.db.transaction(() => {
+      for (const [pair, read] of Object.entries(pairReads)) {
+        const wl = read && read.watch_level;
+        if (!wl || typeof wl !== 'object') continue;
+        const price = Number(wl.price);
+        if (!Number.isFinite(price) || price <= 0) continue;
+        const direction = typeof wl.direction === 'string' ? wl.direction : 'watch';
+        const note = typeof wl.note === 'string' ? wl.note.slice(0, 280) : null;
+        const open = this.stmts.findOpenThesis.get(pair, direction);
+        if (open && open.level_low && Math.abs(open.level_low - price) / price <= PRICE_TOL) {
+          this.stmts.touchThesis.run(ts, note, open.thesis_id);
+        } else {
+          this.stmts.insertThesis.run(runId, ts, pair, 'entry_watch', direction, price, price, note);
+        }
+        touched++;
+      }
+    });
+    txn();
+    return touched;
   }
 
   // Record one pair_snapshots row per pair, in a single transaction so the

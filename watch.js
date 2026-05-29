@@ -373,7 +373,12 @@ Shape (one entry per pair, keyed by the pair symbol):
       "swing":    "bull" | "neutral" | "bear",
       "macro":    "bull" | "neutral" | "bear"
     },
-    "factors": ["<short bullet>", "<short bullet>"]
+    "factors": ["<short bullet>", "<short bullet>"],
+    "watch_level": {
+      "price":     <number>,
+      "direction": "accumulate" | "trim" | "watch",
+      "note":      "<short note in your voice>"
+    }
   }
 
 Stance vocabulary:
@@ -389,6 +394,8 @@ Confidence: how strong YOUR READ is, not how strong any potential move will be. 
 Signals: your read of each timeframe IN ISOLATION. The intraday signal answers "what does the 6h/15m tape look like right now," not "do I want to trade it." Same for swing (7d/4h) and macro (90d/1d). "bull" = trending up / supportive structure / higher lows. "bear" = trending down / breaking down / lower highs. "neutral" = chop, no clean directional read, or contested range. Be honest — don't paint bull on a chart that's neutral just because you like the pair.
 
 Factors: TWO short bullets, under ~70 characters each. This is where YOUR VOICE LANDS — the panel displays these factor bullets literally on the dashboard. The Boons will read them. The Capt-flavored slang they know from the Bridge Logs ("Boonish setup," "marker would advance," "no defended floor," "HBARbarian read," "DOG Army eyes," "the tape's choppy," etc.) is fair game here. Keep each bullet tight and observation-grounded — these are scan-readable card lines, not paragraphs.
+
+Watch level (OPTIONAL): include "watch_level" ONLY when you're eyeing a specific price on this pair — the pullback you'd buy, or a level that would flip your read. Give the price, a direction (accumulate / trim / watch), and a short note in your voice. It gets drawn on the chart as a line you're watching, so only name a level you'd actually act on. No specific number in mind? Omit the field entirely — don't invent one.
 
 CRITICAL: pair_reads MUST contain all five pairs every watch. If a pair is genuinely unreadable (data fetch failed), stance "watch" with confidence "low" and one factor explaining the data gap is correct. Don't silently omit pairs — the panel needs every card every fire.
 
@@ -1349,7 +1356,18 @@ Decide what (if anything) to change. Return JSON only.`;
       .filter(f => typeof f === 'string' && f.trim().length > 0)
       .slice(0, 2)
       .map(f => f.trim());
-    pair_reads[pair] = { stance, confidence: conf, signals, factors };
+    let watch_level = null;
+    if (read.watch_level && typeof read.watch_level === 'object') {
+      const wlPrice = Number(read.watch_level.price);
+      if (Number.isFinite(wlPrice) && wlPrice > 0) {
+        const wlDir = typeof read.watch_level.direction === 'string'
+          ? read.watch_level.direction.toLowerCase() : 'watch';
+        const wlNote = typeof read.watch_level.note === 'string'
+          ? read.watch_level.note.trim().slice(0, 280) : null;
+        watch_level = { price: wlPrice, direction: wlDir, note: wlNote };
+      }
+    }
+    pair_reads[pair] = { stance, confidence: conf, signals, factors, watch_level };
   }
 
   // Filter to valid actions only — defensive against the model returning
@@ -2165,6 +2183,9 @@ async function main() {
       const inserted = safeLedger('pair snapshots',
         (l, rid) => l.recordPairSnapshots(rid, decision.pair_reads));
       if (inserted) logDetail(`Pair snapshots: ${inserted} pair(s) recorded for Capt's Read panel`);
+      const watched = safeLedger('theses',
+        (l, rid) => l.recordTheses(rid, decision.pair_reads));
+      if (watched) logDetail(`Theses: ${watched} watched level(s) captured for the chart`);
     }
 
     // On-chain snapshot — one row per run. Tolerant of partial fills; rows are

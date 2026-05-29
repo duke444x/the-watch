@@ -33,7 +33,7 @@ const SYMS  = ['HBAR',    'BTC',    'DOG',    'SOL',    'SUI'];
 const STACK_TARGETS = ['HBAR', 'DOG'];  // the tokens we measure stacking against
 const OHLC_INTERVAL = 15;
 const LOGS_DIR = './logs';
-const MODEL = 'claude-sonnet-4-6';
+const MODEL = 'claude-opus-4-8';
 
 // Plank position size mapping — % of account value
 const SIZE_PCT = {

@@ -282,7 +282,8 @@ function getLatestOnchain() {
       WHERE hbar_status = 'ok'
         AND hbar_tps_avg IS NOT NULL
         AND ts_utc >= datetime('now', '-7 days')
-    `).get() || null;
+        AND ts_utc < ?
+    `).get(latest.ts_utc) || null;
     const dogBaseline = conn.prepare(`
       SELECT AVG(dog_holders)            AS avg_holders,
              AVG(dog_transactions)       AS avg_transactions,
@@ -293,7 +294,8 @@ function getLatestOnchain() {
       WHERE dog_status = 'ok'
         AND dog_holders IS NOT NULL
         AND ts_utc >= datetime('now', '-7 days')
-    `).get() || null;
+        AND ts_utc < ?
+    `).get(latest.ts_utc) || null;
     return { latest, hbarBaseline, dogBaseline };
   } catch {
     return null;

@@ -12,12 +12,20 @@
 //          Bearer token from UNISAT_API_KEY env var. Free tier covers our
 //          ~8 requests/day comfortably (limit is 5 req/sec, 2000/day).
 //          Pulls runes-marketplace activity for DOG•GO•TO•THE•MOON:
-//          holder count, transactions, BTC volume, market cap.
+//          holder count, sat-floor price, market cap.
 //
 // Failure mode: every fetch is wrapped in try/catch with a hard timeout.
 // On failure the function returns null; the caller treats null as "no data
 // this watch" and Capt simply doesn't reference that source. No spin, no
 // stale fallback — see Option 1 honesty principle.
+//
+// SANITY GUARD (added): a successful fetch is NOT the same as good data. A
+// feed can return 200 OK with a zero, a null, or a stale/structural value
+// that isn't a real signal. Every numeric metric is now passed through sane()
+// before it leaves this module — implausible values collapse to null so the
+// existing "is this present?" checks in formatOnchainSection AND the dashboard
+// skip them. Capt narrates validated numbers only, never a zero he'd dress up
+// as "silence." See the DOG return block for the fields we suppress outright.
 // =============================================================================
 
 const HEDERA_MIRROR_BASE = 'https://mainnet-public.mirrornode.hedera.com';
@@ -26,6 +34,18 @@ const UNISAT_BASE        = 'https://open-api.unisat.io';
 const DOG_RUNE_TICK = 'DOG•GO•TO•THE•MOON';
 
 const TIMEOUT_MS = 12000;  // 12s — Mirror Node is occasionally slow under load
+
+// =============================================================================
+// SANITY GUARD
+// =============================================================================
+// A numeric metric is only trustworthy if it's a finite, positive number.
+// Anything else (null, NaN, 0, negative) means the feed returned nothing real
+// for that field this watch. Collapsing those to null lets every downstream
+// consumer's existing presence check drop the field instead of narrating it.
+// NOTE: use this only for metrics where zero is implausible (TPS, holders,
+// price, market cap). Metrics where zero is legitimately meaningful — e.g.
+// gas-used-in-window — are left untouched.
+const sane = (v) => (Number.isFinite(v) && v > 0) ? v : null;
 
 // =============================================================================
 // HTTP HELPER — fetch with hard timeout, JSON parse, defensive error handling
@@ -92,7 +112,10 @@ async function fetchHederaBlocks() {
     window_secs:    windowSecs,
     total_tx:       totalTx,
     total_gas_used: totalGasUsed,
-    tps_avg:        tpsAvg,
+    // GUARD: a 0 or NaN TPS means the window math failed or the chain returned
+    // nothing usable — null it so the HBAR block degrades gracefully rather
+    // than Capt reading "0 TPS" as a dead chain.
+    tps_avg:        sane(tpsAvg),
     newest_block:   blocks[0]?.number ?? null,
     oldest_block:   blocks[blocks.length - 1]?.number ?? null,
     newest_ts:      newestTs > 0 ? newestTs : null,
@@ -108,8 +131,8 @@ async function fetchHederaSupply() {
     return Number.isFinite(n) ? n / 1e8 : null;
   };
   return {
-    total_supply_hbar:    tinybarToHbar(data?.total_supply),
-    released_supply_hbar: tinybarToHbar(data?.released_supply),
+    total_supply_hbar:    sane(tinybarToHbar(data?.total_supply)),
+    released_supply_hbar: sane(tinybarToHbar(data?.released_supply)),
   };
 }
 
@@ -140,9 +163,26 @@ export async function fetchHbarActivity() {
 // UNISAT — DOG runes activity
 // =============================================================================
 // The marketplace endpoint /v3/market/runes/auction/runes_types_specified
-// returns holders, transactions, BTC volume, price, and market cap for a
-// specific rune tick in a single call. We send the rune tick string and the
-// timeType ("day1" = 24h window).
+// returns holders, sat-floor price, and market cap for a specific rune tick in
+// a single call. We send the rune tick string and the timeType ("day1").
+//
+// WHAT THIS ENDPOINT IS GOOD FOR (real, fresh, runes-native — we keep these):
+//   - holders            (accumulation/distribution signal)
+//   - current_price_sats  (the sat-floor — DOG's value against BTC)
+//   - market cap          (cap in sats/BTC + capUSD)
+//
+// WHAT THIS ENDPOINT IS NOT GOOD FOR (suppressed — see return block):
+//   - btcVolume / amountVolume : AUCTION-house volume only. DOG trades almost
+//        entirely on CEXes (Gate.io, MEXC) since Magic Eden shut down, so this
+//        reads ~0 every watch. Structural, not transient — never a real signal.
+//   - transactions : a CUMULATIVE lifetime count, NOT a 24h figure. It sits
+//        static across runs. Surfacing it as "24h transactions" was wrong.
+//   - changePrice / changePercent : come back 0 from this endpoint; not a
+//        reliable 24h move.
+//
+// If a genuine DOG volume / on-chain activity signal is wanted later, that's a
+// separate source (Hiro Runes API for on-chain transfer activity; CoinGecko for
+// real cross-venue 24h volume) — not this endpoint.
 // =============================================================================
 
 async function fetchUnisatDogStats(apiKey) {
@@ -164,15 +204,11 @@ async function fetchUnisatDogStats(apiKey) {
     const n = typeof v === 'number' ? v : parseFloat(String(v));
     return Number.isFinite(n) ? n : null;
   };
-  // IMPORTANT — Unisat returns `btcVolume` and `cap` denominated in SATOSHIS,
-  // not BTC. The field names are misleading. We divide by 1e8 (sats per BTC)
-  // to get the actual BTC value, and ALSO preserve the raw sats for displays
-  // that prefer the sat-native framing (which is canonical for runes tokens).
-  // The math gives this away: a returned cap of 92,900,000,000 paired with
-  // a returned capUSD of ~$69.5M only makes sense if the cap is sats — at
-  // BTC=$74,692, that's 929 BTC × $74,692 = $69.4M.
-  // `curPrice` is correctly already in sats per unit (rune-native pricing).
-  // `capUSD` is correctly already in actual USD.
+  // Unisat returns `cap` denominated in SATOSHIS, not BTC. We divide by 1e8
+  // (sats per BTC) to get BTC, and preserve raw sats for sat-native context.
+  // `curPrice` is already in sats per unit. `capUSD` is already actual USD.
+  // (Verified empirically: cap 89.9B sats = 899 BTC = capUSD $65.6M at ~$73k/BTC,
+  //  and 899 BTC / 0.899 sats = 100B supply — all internally consistent.)
   const SATS_PER_BTC = 1e8;
   const satsToBtc = (v) => {
     const n = num(v);
@@ -181,16 +217,28 @@ async function fetchUnisatDogStats(apiKey) {
   return {
     tick:                  d.tick || DOG_RUNE_TICK,
     symbol:                d.symbol || null,
-    holders:               num(d.holders),
-    transactions:          num(d.transactions),
-    btc_volume_24h:        satsToBtc(d.btcVolume),  // was wrongly labeled BTC by upstream
-    btc_volume_24h_sats:   num(d.btcVolume),        // raw sats kept for sat-native displays
-    amount_volume_24h:     num(d.amountVolume),
-    current_price_sats:    num(d.curPrice),         // already sats/unit — runes-native
-    change_price_24h:      num(d.changePrice),
-    market_cap_btc:        satsToBtc(d.cap),        // was wrongly labeled BTC by upstream
-    market_cap_sats:       num(d.cap),              // raw sats kept for context
-    market_cap_usd:        num(d.capUSD),           // already actual USD
+
+    // --- TRUSTWORTHY FIELDS (sanity-gated) ---
+    // Real, fresh, runes-native. sane() collapses any future garbage value
+    // (0 / NaN / negative) to null so consumers skip it instead of narrating it.
+    holders:               sane(num(d.holders)),
+    current_price_sats:    sane(num(d.curPrice)),   // sat-floor — runes-native price
+    market_cap_btc:        sane(satsToBtc(d.cap)),
+    market_cap_sats:       sane(num(d.cap)),
+    market_cap_usd:        sane(num(d.capUSD)),
+
+    // --- SUPPRESSED FIELDS (intentionally null) ---
+    // These are structurally unreliable on the auction endpoint (see header).
+    // Nulling them here means formatOnchainSection and the dashboard both skip
+    // them automatically via their existing presence checks — Capt can't read,
+    // and can't narrate, data that isn't a real signal. This is the fix for the
+    // "clean zero sats / 24h transactions" misreads, and it holds every watch.
+    transactions:          null,   // was a cumulative lifetime count, not 24h
+    btc_volume_24h:        null,   // Unisat auction volume only — ~0 for DOG
+    btc_volume_24h_sats:   null,
+    amount_volume_24h:     null,
+    change_price_24h:      null,   // unreliable 0 from this endpoint
+
     deploy_time:           num(d.deployTime),
   };
 }
@@ -198,6 +246,12 @@ async function fetchUnisatDogStats(apiKey) {
 export async function fetchDogActivity(apiKey) {
   try {
     const stats = await fetchUnisatDogStats(apiKey);
+    // Treat a payload with no usable core signal as a failed feed — if neither
+    // holders nor sat-floor survived the sanity gate, there's nothing real to
+    // report, so signal "unavailable" rather than handing Capt an empty shell.
+    if (stats.holders === null && stats.current_price_sats === null) {
+      return { ok: false, errors: ['Unisat returned no usable DOG signal (holders + sat-floor both failed sanity check)'] };
+    }
     return { ok: true, stats };
   } catch (err) {
     return { ok: false, errors: [err.message || String(err)] };

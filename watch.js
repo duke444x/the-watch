@@ -961,6 +961,15 @@ Reminder: this can move up even when dollar PnL is flat (if the stacking token d
 // doesn't see it. No spin, no stale fallback.
 // =============================================================================
 
+// Notability gate — on-chain data reaches Capt's DECISION prompt only when a
+// metric crosses these thresholds vs the 7-day baseline. Below the bar the feed
+// is omitted from the prompt entirely (cards + DB still show the raw fetch), so
+// Capt can't weave a quiet/noisy chain reading into a price read. Tune freely.
+const ONCHAIN_NOTABLE = {
+  tps_pct: 100,     // |HBAR TPS vs 7d baseline| >= this % to surface the HBAR block
+  holders_pct: 5,   // |DOG holders vs 7d baseline| >= this % to surface the DOG block
+};
+
 function formatOnchainSection(onchain, hbarBaseline, dogBaseline) {
   if (!onchain) return '';
 
@@ -994,7 +1003,10 @@ function formatOnchainSection(onchain, hbarBaseline, dogBaseline) {
       const total = s.total_supply_hbar;
       lines.push(`- HBAR supply: ${(circ / 1e9).toFixed(2)}B circulating of ${(total / 1e9).toFixed(2)}B total`);
     }
-    if (lines.length > 0) {
+    const hbarNotable = (hbarBaseline && hbarBaseline.sample_count >= 6 && hbarBaseline.avg_tps && b && b.tps_avg !== null)
+      ? Math.abs(((b.tps_avg - hbarBaseline.avg_tps) / hbarBaseline.avg_tps) * 100) >= ONCHAIN_NOTABLE.tps_pct
+      : false;
+    if (lines.length > 0 && hbarNotable) {
       sections.push(`HEDERA NETWORK ACTIVITY (HBAR — your stacking target, on-chain context)
 ${lines.join('\n')}`);
     }
@@ -1042,7 +1054,10 @@ ${lines.join('\n')}`);
       const usdStr = d.market_cap_usd ? ` (≈ $${(d.market_cap_usd / 1e6).toFixed(2)}M)` : '';
       lines.push(`- DOG market cap: ${d.market_cap_btc.toFixed(2)} BTC${usdStr}`);
     }
-    if (lines.length > 0) {
+    const dogNotable = (dogBaseline && dogBaseline.sample_count >= 6 && dogBaseline.avg_holders && d && d.holders !== null)
+      ? Math.abs(((d.holders - dogBaseline.avg_holders) / dogBaseline.avg_holders) * 100) >= ONCHAIN_NOTABLE.holders_pct
+      : false;
+    if (lines.length > 0 && dogNotable) {
       sections.push(`BITCOIN RUNES ACTIVITY (DOG — your stacking target, on-chain context)
 ${lines.join('\n')}`);
     }

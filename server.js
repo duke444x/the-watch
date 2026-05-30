@@ -149,7 +149,7 @@ function getOpenTrades() {
   return conn.prepare(`
     SELECT trade_id, run_id, ts_utc, pair, side, size_label, volume,
            fill_price, cost_usd, fee_usd, tier_at_entry, forced,
-           invalidation_price, take_profit_price, time_stop_hours
+           invalidation_price, take_profit_price, time_stop_hours, kraken_order_id
     FROM trades
     WHERE status = 'open'
     ORDER BY ts_utc ASC
@@ -162,7 +162,8 @@ function getClosedTrades(limit) {
   return conn.prepare(`
     SELECT trade_id, run_id, ts_utc, pair, side, size_label, volume,
            fill_price, cost_usd, fee_usd, exit_price, exit_ts_utc,
-           exit_reason, pnl_usd, pnl_pct, forced
+           exit_reason, pnl_usd, pnl_pct, forced, kraken_order_id,
+           invalidation_price, take_profit_price
     FROM trades
     WHERE status = 'closed'
     ORDER BY exit_ts_utc DESC
@@ -211,6 +212,70 @@ function getPlankWalks() {
   } catch {
     return [];  // table might not exist yet
   }
+}
+
+// The Reckoning: score every ACTED read (closed trade) by realized result, and
+// denominate the stack ledger in the token itself — a win adds tokens, a wrong
+// call subtracts the token-equivalent of the dollars it gave back (at exit
+// price). Live held stack comes from open positions. Pure watch/wait verdicts
+// (right-by-inaction) are deferred to v2; they need a price-vs-prediction rule.
+function getScorecard() {
+  const conn = getDb();
+  const empty = { available: false, pairs: [], totals: null, calls: [] };
+  if (!conn) return empty;
+
+  const closed = conn.prepare(`
+    SELECT trade_id, pair, side, volume, fill_price, exit_price, exit_ts_utc,
+           exit_reason, pnl_usd, pnl_pct
+    FROM trades
+    WHERE status = 'closed' AND exit_price IS NOT NULL
+    ORDER BY exit_ts_utc DESC
+  `).all();
+
+  let open = [];
+  try {
+    open = conn.prepare(
+      `SELECT pair, volume FROM trades WHERE status = 'open'`
+    ).all();
+  } catch { open = []; }
+
+  const byPair = {};
+  const ensure = (p) => (byPair[p] || (byPair[p] = {
+    pair: p, wins: 0, losses: 0, neutral: 0, net_tokens: 0, held_tokens: 0,
+  }));
+
+  const calls = closed.map((t) => {
+    const pnl = Number(t.pnl_usd) || 0;
+    const verdict = pnl > 0 ? 'correct' : pnl < 0 ? 'wrong' : 'neutral';
+    const tokenDelta = (Number(t.exit_price) > 0) ? pnl / Number(t.exit_price) : 0;
+    const a = ensure(t.pair);
+    if (verdict === 'correct') a.wins++;
+    else if (verdict === 'wrong') a.losses++;
+    else a.neutral++;
+    a.net_tokens += tokenDelta;
+    return {
+      trade_id: t.trade_id, pair: t.pair, ts: t.exit_ts_utc,
+      fill_price: t.fill_price, exit_price: t.exit_price,
+      exit_reason: t.exit_reason, verdict,
+      pnl_usd: pnl, pnl_pct: t.pnl_pct, token_delta: tokenDelta,
+    };
+  });
+
+  for (const o of open) ensure(o.pair).held_tokens += Number(o.volume) || 0;
+
+  const pairs = Object.values(byPair).map((a) => {
+    const decided = a.wins + a.losses;
+    return { ...a, decided, win_rate: decided > 0 ? a.wins / decided : null };
+  }).sort((x, y) => (y.decided - x.decided) || x.pair.localeCompare(y.pair));
+
+  const totals = pairs.reduce((acc, a) => {
+    acc.wins += a.wins; acc.losses += a.losses; acc.neutral += a.neutral;
+    return acc;
+  }, { wins: 0, losses: 0, neutral: 0 });
+  totals.decided = totals.wins + totals.losses;
+  totals.win_rate = totals.decided > 0 ? totals.wins / totals.decided : null;
+
+  return { available: closed.length > 0 || open.length > 0, pairs, totals, calls };
 }
 
 // Latest pair_snapshots row per pair. Each row carries Capt's structured read
@@ -385,6 +450,7 @@ app.get('/api/state', async (req, res) => {
         tier: t.tier_at_entry,
         forced: !!t.forced,
         opened_at: t.ts_utc,
+        kraken_order_id: t.kraken_order_id,
         invalidation_price: t.invalidation_price,
         take_profit_price: t.take_profit_price,
         time_stop_hours: t.time_stop_hours,
@@ -777,6 +843,18 @@ app.get('/api/plank-walks', (req, res) => {
   try {
     res.json({ plank_walks: getPlankWalks() });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/scorecard — The Reckoning: per-asset conviction record + stack ledger
+// ---------------------------------------------------------------------------
+app.get('/api/scorecard', (req, res) => {
+  try {
+    res.json(getScorecard());
+  } catch (e) {
+    console.error('[dashboard] /api/scorecard error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

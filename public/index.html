@@ -170,6 +170,36 @@
     .hero .credits .phrase { white-space: nowrap; }
     .hero .credits .sep { color: rgba(110, 118, 129, 0.7); }
     .hero .credits .accent { color: var(--teal); }
+    .hero-kraken {
+      position: absolute;
+      right: clamp(16px, 3vw, 36px);
+      bottom: clamp(16px, 3vw, 30px);
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 3px;
+      pointer-events: none;
+    }
+    .hero-kraken .hk-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: rgba(230, 237, 243, 0.6);
+      text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
+    }
+    .hero-kraken .hk-name {
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: clamp(20px, 4vw, 30px);
+      line-height: 1;
+      letter-spacing: 1px;
+      color: var(--teal);
+      text-shadow:
+        0 0 26px rgba(45, 212, 191, 0.5),
+        0 2px 16px rgba(0, 0, 0, 0.85);
+    }
     .hero-brand {
       position: absolute;
       top: 20px;
@@ -985,6 +1015,29 @@
       font-family: var(--mono);
     }
 
+    /* ─── The Reckoning — Captain's Logbook ────────────────── */
+    .reck-sub { color: var(--text-muted); font-size: 12px; margin: -8px 0 16px; font-style: italic; }
+    .reck-assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .reck-card { background: var(--bg-card-hi); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; position: relative; overflow: hidden; }
+    .reck-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border); }
+    .reck-card.up::before { background: var(--teal); }
+    .reck-card.down::before { background: var(--coral); }
+    .reck-card-pair { font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: 0.5px; }
+    .reck-card-rec { font-family: var(--mono); font-size: 12px; margin-top: 4px; }
+    .reck-card-net { font-family: var(--mono); font-weight: 700; font-size: 16px; margin-top: 6px; }
+    .reck-card-held { font-family: var(--mono); font-size: 10.5px; margin-top: 2px; }
+    .reck-log { display: flex; flex-direction: column; gap: 6px; }
+    .reck-row { display: grid; grid-template-columns: 24px 64px 1fr auto auto auto; gap: 10px; align-items: center; padding: 8px 11px; background: var(--bg-card-hi); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; font-family: var(--mono); }
+    .reck-row .reck-verdict { font-weight: 700; text-align: center; font-size: 13px; }
+    .reck-correct .reck-verdict { color: var(--teal); }
+    .reck-wrong .reck-verdict { color: var(--coral); }
+    .reck-neutral .reck-verdict { color: var(--text-dim); }
+    .reck-row .reck-tok { text-align: right; }
+    @media (max-width: 640px) {
+      .reck-row { grid-template-columns: 22px 1fr auto auto; }
+      .reck-row .reck-px, .reck-row .reck-reason { display: none; }
+    }
+
     /* ─── Equity chart ────────────────────────────────────────────────── */
     .chart-wrap { width: 100%; position: relative; }
     .chart svg { display: block; width: 100%; height: 240px; }
@@ -1022,6 +1075,38 @@
     .chart-axis { stroke: var(--border); stroke-width: 1; }
     .chart-label { fill: var(--text-muted); font-family: var(--mono); font-size: 10px; }
     .chart-dot { fill: var(--teal); filter: drop-shadow(0 0 4px var(--teal)); }
+
+    /* ─── The Chart — price + watched levels + fills ───────────────────── */
+    .tchart-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+    .seg { display: inline-flex; gap: 4px; background: var(--bg-deep); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+    .seg-btn {
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px;
+      color: var(--text-muted); background: transparent; border: none; cursor: pointer;
+      padding: 5px 11px; border-radius: 6px; transition: background 0.15s, color 0.15s;
+    }
+    .seg-btn:hover { color: var(--text-primary); }
+    .seg-btn.active { background: var(--bg-card-hi); color: var(--gold); box-shadow: inset 0 0 0 1px var(--border-hi); }
+    #thesis-chart { width: 100%; height: 380px; position: relative; }
+    .tchart-tip {
+      position: absolute; z-index: 5; pointer-events: none;
+      background: var(--bg-card-hi); border: 1px solid var(--border-hi);
+      border-radius: 8px; padding: 8px 11px; font-family: var(--mono); font-size: 11px;
+      color: var(--text-primary); box-shadow: 0 6px 20px rgba(0,0,0,0.5); max-width: 250px;
+    }
+    .tchart-tip .tip-h { color: var(--gold); font-size: 10.5px; letter-spacing: 0.3px; margin-bottom: 4px; }
+    .tchart-tip > div { line-height: 1.55; }
+    .tchart-tip .dim { color: var(--text-dim); }
+    .tchart-tip .pos { color: var(--teal); }
+    .tchart-tip .neg { color: var(--coral); }
+    .tchart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+    .tchart-legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+    .tchart-legend .sw { width: 16px; border-top: 2px solid currentColor; display: inline-block; }
+    .tchart-legend .sw.dash { border-top-style: dotted; }
+    .tchart-legend .acc { color: var(--teal); }
+    .tchart-legend .trim { color: var(--coral); }
+    .tchart-legend .buy { color: var(--sky); }
+    .tchart-legend .win { color: var(--teal); }
+    .tchart-legend .loss { color: var(--coral); }
 
     /* ─── Position cards ─────────────────────────────────────────────── */
     .position {
@@ -1293,12 +1378,16 @@
         <div class="credits">
           <span class="phrase">The Watch</span>
           <span class="sep">·</span>
-          <span class="phrase">Built on <span class="accent">Kraken CLI</span></span>
+          <span class="phrase">By Capt. Crawl</span>
           <span class="sep">·</span>
-          <span class="phrase">By Capt. Crawl for the Boons</span>
+          <span class="phrase"><a class="accent" href="https://x.com/Boons4ever" target="_blank" rel="noopener">@Boons4ever</a></span>
           <span class="sep">·</span>
           <span class="phrase accent">B4E</span>
         </div>
+      </div>
+      <div class="hero-kraken">
+        <span class="hk-label">Built on</span>
+        <span class="hk-name">Kraken CLI</span>
       </div>
     </header>
 
@@ -1371,9 +1460,35 @@
       <div id="markets"></div>
     </section>
 
+    <!-- The Chart — price candles + Capt's watched levels + fills (Kraken-CLI spine) -->
+    <section id="thesis-chart-section">
+      <h2>The Chart <span class="count" id="thesis-chart-status">—</span></h2>
+      <div class="tchart-controls">
+        <div class="seg" id="thesis-pairs"></div>
+        <div class="seg" id="thesis-tfs"></div>
+      </div>
+      <div class="chart-wrap"><div id="thesis-chart"></div></div>
+      <div class="tchart-legend">
+        <span class="lg acc"><span class="sw"></span> stack level (watching)</span>
+        <span class="lg trim"><span class="sw"></span> trim level</span>
+        <span class="lg dim"><span class="sw dash"></span> superseded</span>
+        <span class="lg buy">▲ entry</span>
+        <span class="lg win">▼ exit · win</span>
+        <span class="lg loss">▼ exit · loss</span>
+      </div>
+    </section>
+
     <section>
       <h2>Equity Curve <span class="count" id="equity-count">—</span></h2>
       <div class="chart-wrap chart" id="chart"></div>
+    </section>
+
+    <!-- The Reckoning — Captain's Logbook: every read scored and recorded -->
+    <section id="reckoning-section">
+      <h2>The Reckoning <span class="count" id="reckoning-count">—</span></h2>
+      <div class="reck-sub">Captain's Logbook · every call scored, win or wrong</div>
+      <div class="reck-assets" id="reck-assets"></div>
+      <div class="reck-log" id="reck-log"></div>
     </section>
 
     <section>
@@ -1411,6 +1526,7 @@
     </footer>
   </div>
 
+  <script src="/lightweight-charts.standalone.production.js"></script>
   <script>
     const fmtUsd = (v) => {
       if (v === null || v === undefined) return '—';
@@ -1669,6 +1785,62 @@
           ${dots}
           ${xLabels.join('')}
         </svg>`;
+    }
+
+    function renderReckoning(sc) {
+      sc = sc || { available: false, pairs: [], calls: [] };
+      const pairs = sc.pairs || [];
+      const calls = sc.calls || [];
+      const countEl = document.getElementById('reckoning-count');
+      if (countEl) countEl.textContent = '(' + calls.length + ' scored)';
+
+      const fmtTok = (v) => {
+        if (!Number.isFinite(v)) return '\u2014';
+        const a = Math.abs(v);
+        const d = a >= 1000 ? 0 : a >= 1 ? 2 : 6;
+        return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+      };
+      const sTok = (v) => (v > 0 ? '+' : '') + fmtTok(v);
+
+      const assetsEl = document.getElementById('reck-assets');
+      if (assetsEl) assetsEl.innerHTML = pairs.map((p) => {
+        const sym = p.pair.replace('USD', '');
+        const tone = p.net_tokens > 0 ? 'up' : p.net_tokens < 0 ? 'down' : '';
+        const netCls = p.net_tokens > 0 ? 'pos' : p.net_tokens < 0 ? 'neg' : 'dim';
+        const rate = p.decided > 0
+          ? Math.round(p.win_rate * 100) + '% (' + p.wins + '/' + p.decided + ')'
+          : '(' + p.wins + '/' + p.decided + ')';
+        const held = (p.held_tokens && p.held_tokens > 0)
+          ? '<div class="reck-card-held dim">held ' + fmtTok(p.held_tokens) + ' ' + sym + '</div>'
+          : '';
+        return '<div class="reck-card ' + tone + '">'
+          + '<div class="reck-card-pair">' + sym + '</div>'
+          + '<div class="reck-card-rec"><span class="pos">' + p.wins + '</span>-<span class="neg">' + p.losses + '</span> <span class="dim">' + rate + '</span></div>'
+          + '<div class="reck-card-net ' + netCls + '">' + sTok(p.net_tokens) + ' ' + sym + '</div>'
+          + held
+          + '</div>';
+      }).join('');
+
+      const logEl = document.getElementById('reck-log');
+      if (!logEl) return;
+      if (!calls.length) {
+        logEl.innerHTML = '<div class="empty-state"><strong>No calls scored yet.</strong><br>The log fills as Capt\'s reads resolve \u2014 win or wrong, it all goes on the books.</div>';
+        return;
+      }
+      logEl.innerHTML = calls.map((c) => {
+        const sym = c.pair.replace('USD', '');
+        const v = c.verdict === 'correct' ? '\u2713' : c.verdict === 'wrong' ? '\u2717' : '\u2022';
+        const reason = (c.exit_reason || 'manual').replace('_', ' ');
+        const netCls = c.token_delta > 0 ? 'pos' : c.token_delta < 0 ? 'neg' : 'dim';
+        return '<div class="reck-row reck-' + c.verdict + '">'
+          + '<span class="reck-verdict">' + v + '</span>'
+          + '<span><strong>' + c.pair + '</strong></span>'
+          + '<span class="muted reck-px">' + fmtPrice(c.fill_price) + ' \u2192 ' + fmtPrice(c.exit_price) + '</span>'
+          + '<span class="reck-reason"><span class="reason-chip reason-' + (c.exit_reason || 'manual') + '">' + reason + '</span></span>'
+          + '<span class="reck-tok ' + netCls + '">' + sTok(c.token_delta) + ' ' + sym + '</span>'
+          + '<span class="' + pnlClass(c.pnl_usd) + '" style="text-align:right">' + fmtUsdSigned(c.pnl_usd) + '</span>'
+          + '</div>';
+      }).join('');
     }
 
     function renderCloses(closes) {
@@ -2323,25 +2495,233 @@
 
     async function refreshHistory() {
       try {
-        const [equity, closes, decisions, planks] = await Promise.all([
+        const [equity, closes, decisions, planks, reckoning] = await Promise.all([
           fetchJson('/api/equity'),
           fetchJson('/api/closes?limit=20'),
           fetchJson('/api/decisions?limit=20'),
           fetchJson('/api/plank-walks'),
+          fetchJson('/api/scorecard').catch(() => ({ available: false, pairs: [], calls: [] })),
         ]);
         renderEquity(equity.snapshots || []);
         renderCloses(closes.closes || []);
         renderDecisions(decisions.decisions || []);
         renderPlankWalks(planks.plank_walks || []);
+        renderReckoning(reckoning || { available: false, pairs: [], calls: [] });
       } catch (e) {
         console.error('refreshHistory failed:', e);
       }
     }
 
+    // ─── The Chart — price + watched levels + fills (Kraken-CLI spine) ───
+    const THESIS_PAIRS = ['BTCUSD','HBARUSD','DOGUSD','SOLUSD','SUIUSD'];
+    const THESIS_TFS = [{ label:'15m', value:15 }, { label:'4h', value:240 }, { label:'1d', value:1440 }];
+    let tChart = null, tSeries = null, tPriceLines = [], tTradeSeries = [], tTrades = [], tPrec = 2, tTooltip = null, tLastView = '';
+    let tPair = 'BTCUSD', tInterval = 240;
+
+    function initThesisChart() {
+      const host = document.getElementById('thesis-chart');
+      if (!host || !window.LightweightCharts) return;
+      tChart = LightweightCharts.createChart(host, {
+        autoSize: true,
+        layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8b949e',
+                  fontFamily: "'SF Mono','JetBrains Mono',Menlo,monospace", fontSize: 11 },
+        grid: { vertLines: { color: 'rgba(42,47,59,0.4)' }, horzLines: { color: 'rgba(42,47,59,0.4)' } },
+        rightPriceScale: { borderColor: '#2a2f3b' },
+        timeScale: { borderColor: '#2a2f3b', timeVisible: true, secondsVisible: false },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      });
+      tSeries = tChart.addCandlestickSeries({
+        upColor: '#2DD4BF', downColor: '#FB7185',
+        wickUpColor: '#2DD4BF', wickDownColor: '#FB7185',
+        borderUpColor: '#2DD4BF', borderDownColor: '#FB7185',
+      });
+      const pairWrap = document.getElementById('thesis-pairs');
+      pairWrap.innerHTML = THESIS_PAIRS.map(p =>
+        `<button class="seg-btn${p===tPair?' active':''}" data-pair="${p}">${p.replace('USD','')}</button>`).join('');
+      pairWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        tPair = b.dataset.pair;
+        pairWrap.querySelectorAll('button').forEach(x => x.classList.toggle('active', x===b));
+        refreshThesisChart();
+      }));
+      const tfWrap = document.getElementById('thesis-tfs');
+      tfWrap.innerHTML = THESIS_TFS.map(t =>
+        `<button class="seg-btn${t.value===tInterval?' active':''}" data-tf="${t.value}">${t.label}</button>`).join('');
+      tfWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        tInterval = parseInt(b.dataset.tf, 10);
+        tfWrap.querySelectorAll('button').forEach(x => x.classList.toggle('active', x===b));
+        refreshThesisChart();
+      }));
+
+      tTooltip = document.createElement('div');
+      tTooltip.className = 'tchart-tip';
+      tTooltip.style.display = 'none';
+      host.appendChild(tTooltip);
+      tChart.subscribeCrosshairMove((param) => {
+        if (!param || !param.point || param.time === undefined) { tTooltip.style.display = 'none'; return; }
+        const hit = tTrades.find(tr => param.time >= tr.t0 && param.time <= tr.t1);
+        if (!hit) { tTooltip.style.display = 'none'; return; }
+        tTooltip.innerHTML = hit.html;
+        tTooltip.style.display = 'block';
+        let x = param.point.x + 14, y = param.point.y + 14;
+        if (x + tTooltip.offsetWidth > host.clientWidth) x = param.point.x - tTooltip.offsetWidth - 14;
+        if (y + tTooltip.offsetHeight > host.clientHeight) y = param.point.y - tTooltip.offsetHeight - 14;
+        tTooltip.style.left = Math.max(0, x) + 'px';
+        tTooltip.style.top = Math.max(0, y) + 'px';
+      });
+    }
+
+    function clearThesisLines() {
+      tPriceLines.forEach(l => { try { tSeries.removePriceLine(l); } catch (e) {} });
+      tPriceLines = [];
+    }
+
+    function drawTheses(theses) {
+      clearThesisLines();
+      const LS = LightweightCharts.LineStyle;
+      const dirColor = { accumulate: '#2DD4BF', trim: '#FB7185', watch: '#61A6DD' };
+      (theses || []).filter(t => Number.isFinite(t.level_low)).slice(0, 8).forEach(t => {
+        const watching = t.state === 'watching';
+        const base = dirColor[t.direction] || '#61A6DD';
+        tPriceLines.push(tSeries.createPriceLine({
+          price: t.level_low,
+          color: watching ? base : 'rgba(110,118,129,0.4)',
+          lineWidth: watching ? 2 : 1,
+          lineStyle: watching ? LS.Dashed : LS.Dotted,
+          axisLabelVisible: watching,
+          title: watching ? (t.direction === 'accumulate' ? 'stack' : t.direction) : '',
+        }));
+      });
+    }
+
+    function snapToCandle(sec, times) {
+      if (!times.length) return sec;
+      let best = times[0];
+      for (const ct of times) { if (ct <= sec) best = ct; else break; }
+      return best;
+    }
+
+    function tFmtPrice(p) {
+      if (!Number.isFinite(p)) return '\u2014';
+      return Number(p).toLocaleString('en-US', { minimumFractionDigits: tPrec, maximumFractionDigits: tPrec });
+    }
+
+    const EXIT_LABEL = { invalidation: 'inval', take_profit: 'TP', plank_walk: 'plank', time_stop: 'time' };
+
+    function clearTradeSeries() {
+      tTradeSeries.forEach(s => { try { tChart.removeSeries(s); } catch (e) {} });
+      tTradeSeries = [];
+      tTrades = [];
+    }
+
+    function addSeg(t0, t1, price, color, width, style) {
+      if (t0 === t1 || !Number.isFinite(price)) return;
+      const s = tChart.addLineSeries({ color, lineWidth: width, lineStyle: style,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      s.setData([{ time: t0, value: price }, { time: t1, value: price }]);
+      tTradeSeries.push(s);
+    }
+
+    function drawTrades(closes, positions, candleTimes) {
+      clearTradeSeries();
+      const markers = [];
+      if (!candleTimes.length) { tSeries.setMarkers(markers); return; }
+      const LS = LightweightCharts.LineStyle;
+      const toSec = (iso) => Math.floor(new Date(iso).getTime() / 1000);
+      const lastT = candleTimes[candleTimes.length - 1];
+
+      (closes || []).filter(c => c.pair === tPair && c.fill_price && c.ts_utc).forEach(c => {
+        const t0 = snapToCandle(toSec(c.ts_utc), candleTimes);
+        const hasExit = c.exit_price && c.exit_ts_utc;
+        const t1 = hasExit ? snapToCandle(toSec(c.exit_ts_utc), candleTimes) : lastT;
+        const win = (c.pnl_usd || 0) >= 0;
+        addSeg(t0, t1, c.invalidation_price, 'rgba(251,113,133,0.5)', 1, LS.Dotted);
+        addSeg(t0, t1, c.take_profit_price, 'rgba(45,212,191,0.45)', 1, LS.Dotted);
+        if (hasExit && t0 !== t1) {
+          const v = tChart.addLineSeries({ color: win ? '#2DD4BF' : '#FB7185', lineWidth: 2,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+          v.setData([{ time: t0, value: c.fill_price }, { time: t1, value: c.exit_price }]);
+          tTradeSeries.push(v);
+        }
+        markers.push({ time: t0, position: 'belowBar', color: '#61A6DD', shape: 'arrowUp', text: tFmtPrice(c.fill_price) });
+        if (hasExit) {
+          const reason = EXIT_LABEL[c.exit_reason] || c.exit_reason || 'exit';
+          markers.push({ time: t1, position: 'aboveBar', color: win ? '#2DD4BF' : '#FB7185', shape: 'arrowDown', text: reason + ' ' + tFmtPrice(c.exit_price) });
+        }
+        const pnlPct = Number.isFinite(c.pnl_pct) ? ((c.pnl_pct >= 0 ? '+' : '') + c.pnl_pct.toFixed(2) + '%') : '\u2014';
+        const pnlUsd = Number.isFinite(c.pnl_usd) ? ((c.pnl_usd >= 0 ? '+$' : '-$') + Math.abs(c.pnl_usd).toFixed(2)) : '';
+        tTrades.push({ t0, t1, html:
+          '<div class="tip-h">' + (c.kraken_order_id || 'trade') + ' \u00b7 ' + tPair.replace('USD','') + ' ' + c.side + ' ' + (c.size_label || '') + '</div>' +
+          '<div>fill ' + tFmtPrice(c.fill_price) + (hasExit ? ' \u2192 exit ' + tFmtPrice(c.exit_price) : ' \u00b7 open') + '</div>' +
+          '<div class="dim">inval ' + tFmtPrice(c.invalidation_price) + ' \u00b7 tp ' + tFmtPrice(c.take_profit_price) + '</div>' +
+          (hasExit ? ('<div class="' + (win ? 'pos' : 'neg') + '">' + (EXIT_LABEL[c.exit_reason] || c.exit_reason || '') + ' \u00b7 ' + pnlPct + ' ' + pnlUsd + '</div>') : '') });
+      });
+
+      (positions || []).filter(p => p.pair === tPair && p.fill_price && p.opened_at).forEach(p => {
+        const t0 = snapToCandle(toSec(p.opened_at), candleTimes);
+        addSeg(t0, lastT, p.invalidation_price, 'rgba(251,113,133,0.55)', 1, LS.Dotted);
+        addSeg(t0, lastT, p.take_profit_price, 'rgba(45,212,191,0.5)', 1, LS.Dotted);
+        markers.push({ time: t0, position: 'belowBar', color: '#F9C015', shape: 'arrowUp', text: tFmtPrice(p.fill_price) });
+        tTrades.push({ t0, t1: lastT, html:
+          '<div class="tip-h">' + (p.kraken_order_id || 'open') + ' \u00b7 ' + tPair.replace('USD','') + ' ' + p.side + ' ' + (p.size_label || '') + '</div>' +
+          '<div>fill ' + tFmtPrice(p.fill_price) + ' \u00b7 open</div>' +
+          '<div class="dim">inval ' + tFmtPrice(p.invalidation_price) + '</div>' });
+      });
+
+      markers.sort((a, b) => a.time - b.time);
+      tSeries.setMarkers(markers);
+    }
+
+    function precisionFor(price) {
+      const p = Math.abs(Number(price) || 0);
+      if (p >= 1000)  return 1;
+      if (p >= 1)     return 2;
+      if (p >= 0.1)   return 4;
+      if (p >= 0.01)  return 5;
+      if (p >= 0.001) return 6;
+      return 7;
+    }
+
+    async function refreshThesisChart() {
+      if (!tSeries) return;
+      const statusEl = document.getElementById('thesis-chart-status');
+      try {
+        const [candlesR, thesesR, closesR, stateR] = await Promise.all([
+          fetchJson(`/api/candles?pair=${tPair}&interval=${tInterval}`),
+          fetchJson(`/api/theses?pair=${tPair}`).catch(() => ({ theses: [] })),
+          fetchJson('/api/closes?limit=50').catch(() => ({ closes: [] })),
+          fetchJson('/api/state').catch(() => ({ positions: [] })),
+        ]);
+        const candles = candlesR.candles || [];
+        if (candles.length) {
+          tPrec = precisionFor(candles[candles.length - 1].close);
+          tSeries.applyOptions({ priceFormat: { type: 'price', precision: tPrec, minMove: Math.pow(10, -tPrec) } });
+        }
+        tSeries.setData(candles);
+        tSeries.priceScale().applyOptions({ autoScale: true });
+        const times = candles.map(c => c.time);
+        drawTheses(thesesR.theses || []);
+        drawTrades(closesR.closes || [], stateR.positions || [], times);
+        const viewKey = tPair + '|' + tInterval;
+        if (viewKey !== tLastView) {
+          tLastView = viewKey;
+          const visN = ({ 15: 120, 240: 130, 1440: 120 })[tInterval] || 120;
+          if (candles.length > visN) tChart.timeScale().setVisibleLogicalRange({ from: candles.length - visN, to: candles.length + 3 });
+          else tChart.timeScale().fitContent();
+        }
+        if (statusEl) statusEl.textContent = `${tPair.replace('USD','')} · ${candles.length} candles`;
+      } catch (e) {
+        if (statusEl) statusEl.textContent = 'chart unavailable';
+        console.error('thesis chart failed:', e);
+      }
+    }
+
     refreshLive();
     refreshHistory();
+    initThesisChart();
+    refreshThesisChart();
     setInterval(refreshLive, 15_000);
     setInterval(refreshHistory, 60_000);
+    setInterval(refreshThesisChart, 60_000);
   </script>
 </body>
 </html>

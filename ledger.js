@@ -386,6 +386,10 @@ export default class Ledger {
         UPDATE theses SET updated_ts_utc = ?, note = COALESCE(?, note)
         WHERE thesis_id = ?
       `),
+      supersedeThesis: this.db.prepare(`
+        UPDATE theses SET state = 'superseded', resolved_run_id = ?, updated_ts_utc = ?
+        WHERE thesis_id = ?
+      `),
 
       // ---- reads ----
       getOpenTrades: this.db.prepare(`
@@ -710,6 +714,9 @@ export default class Ledger {
         if (open && open.level_low && Math.abs(open.level_low - price) / price <= PRICE_TOL) {
           this.stmts.touchThesis.run(ts, note, open.thesis_id);
         } else {
+          if (open) {
+            this.stmts.supersedeThesis.run(runId, ts, open.thesis_id);
+          }
           this.stmts.insertThesis.run(runId, ts, pair, 'entry_watch', direction, price, price, note, ts);
         }
         touched++;

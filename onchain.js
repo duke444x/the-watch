@@ -6,7 +6,7 @@
 //   HBAR — Hedera Mirror Node (mainnet-public.mirrornode.hedera.com)
 //          No auth required, generous rate limits, official Hedera-hosted.
 //          Pulls recent block data to compute network TPS, transaction
-//          throughput, and supply context.
+//          throughput, total network fees paid (HBAR), and supply context.
 //
 //   DOG  — Unisat Open API (open-api.unisat.io)
 //          Bearer token from UNISAT_API_KEY env var. Free tier covers our
@@ -30,6 +30,7 @@
 
 const HEDERA_MIRROR_BASE = 'https://mainnet-public.mirrornode.hedera.com';
 const UNISAT_BASE        = 'https://open-api.unisat.io';
+const KRAKEN_TICKER_BASE = 'https://api.kraken.com';
 
 const DOG_RUNE_TICK = 'DOG•GO•TO•THE•MOON';
 
@@ -82,6 +83,10 @@ async function fetchJson(url, opts = {}, timeoutMs = TIMEOUT_MS) {
 //   - average TPS = total / span
 //   - average transactions per block
 //
+// We also return the window's raw consensus-timestamp bounds (oldest_ts_str /
+// newest_ts_str) so fetchHederaFees can scope its transaction sweep to exactly
+// the same window the rest of the HBAR metrics describe.
+//
 // Plus network supply for context. This is enough for Capt to reason about
 // network activity without imagining details we can't verify.
 // =============================================================================
@@ -101,6 +106,11 @@ async function fetchHederaBlocks() {
   }
   // Hedera timestamps are strings like "1735689600.123456789" (seconds.nanos)
   const parseTs = (s) => parseFloat(String(s || '0').split('-')[0]);
+  // Raw seconds.nanos strings for the fee window query — passed verbatim to the
+  // Mirror Node `timestamp=gte:/lte:` filter so we keep full nanosecond bounds
+  // (parseFloat would truncate the nanos and drift the window edge).
+  const newestTsStr = blocks[0]?.timestamp?.to || blocks[0]?.timestamp?.from || null;
+  const oldestTsStr = blocks[blocks.length - 1]?.timestamp?.from || null;
   const newestTs = parseTs(blocks[0]?.timestamp?.to || blocks[0]?.timestamp?.from);
   const oldestTs = parseTs(blocks[blocks.length - 1]?.timestamp?.from);
   const windowSecs = (newestTs > 0 && oldestTs > 0 && newestTs > oldestTs)
@@ -119,6 +129,115 @@ async function fetchHederaBlocks() {
     newest_block:   blocks[0]?.number ?? null,
     oldest_block:   blocks[blocks.length - 1]?.number ?? null,
     newest_ts:      newestTs > 0 ? newestTs : null,
+    newest_ts_str:  newestTsStr,
+    oldest_ts_str:  oldestTsStr,
+  };
+}
+
+// =============================================================================
+// HEDERA FEES — total network fees paid across the block window (HBAR)
+// =============================================================================
+// Unlike gas (EVM-contract-only, and aggregated at the block level), there is
+// NO block-level fee total on the Mirror Node. Fees live per-transaction as
+// `charged_tx_fee` (tinybars). So the true all-activity fee number means
+// summing that field across every transaction in the window.
+//
+// CHILD-TX NUANCE: inner / scheduled / child transactions report
+// charged_tx_fee = 0 — the fee is charged to the PARENT record. So a straight
+// sum over every record returned is correct: children contribute 0, parents
+// carry the real fee, nothing is double-counted.
+//
+// THROUGHPUT GUARD: Hedera can spike into the thousands of TPS, so a ~3-min
+// window can hold far more transactions than the block `count` field implies.
+// We cap paging at MAX_PAGES (bounded cost every watch, regardless of load).
+// If we hit the cap before draining the window, we extrapolate the unseen
+// older slice by TIME coverage — sum_seen / (covered_span / window_span) —
+// assuming roughly uniform fee density, and flag the result `estimated`. Using
+// the transactions' own timestamps (not block counts) keeps the numerator and
+// denominator on the same population, so the estimate stays internally honest.
+//
+// Supplementary by contract: this runs AFTER blocks and a failure returns null
+// without ever sinking the HBAR read.
+// =============================================================================
+
+async function fetchHederaFees(startTs, endTs) {
+  // Cap sized to fully DRAIN the window at normal mainnet throughput (~14k tx
+  // at ~70 TPS) with margin, so the common case is an EXACT sum. On a genuine
+  // spike the window can hold far more than any cap could drain (1000 TPS ≈
+  // 200k tx) — but the cap isn't a failure point: by the time we hit it we've
+  // sampled ~20k tx, which pins the fee-per-tx average down tight, so the
+  // time-coverage extrapolation below is an ACCURATE rate×window estimate (not
+  // the noisy small-sample kind), honestly flagged via `estimated`.
+  const MAX_PAGES = 200;
+  const PAGE_LIMIT = 100;          // Mirror Node max page size
+  const TINYBAR_PER_HBAR = 1e8;
+
+  if (!startTs || !endTs) return null;
+
+  const startNum = parseFloat(String(startTs));
+  const endNum   = parseFloat(String(endTs));
+  const windowSpan = (Number.isFinite(startNum) && Number.isFinite(endNum) && endNum > startNum)
+    ? (endNum - startNum)
+    : null;
+
+  let url = `${HEDERA_MIRROR_BASE}/api/v1/transactions`
+    + `?timestamp=gte:${startTs}&timestamp=lte:${endTs}`
+    + `&limit=${PAGE_LIMIT}&order=desc`;
+
+  let totalTinybar = 0;
+  let counted      = 0;
+  let pages        = 0;
+  let drained      = false;
+  let lastSeenTs   = endNum;       // oldest ts seen so far; walks backward
+
+  while (url && pages < MAX_PAGES) {
+    let data;
+    try {
+      data = await fetchJson(url);
+    } catch (err) {
+      // A flaky page mid-sweep shouldn't nuke the whole metric: stop here and
+      // extrapolate from what we have (flagged estimated below). If it fails on
+      // the very first page, totalTinybar stays 0 → sane() nulls it cleanly.
+      break;
+    }
+    const txns = Array.isArray(data?.transactions) ? data.transactions : [];
+    for (const t of txns) {
+      const fee = Number(t.charged_tx_fee);
+      if (Number.isFinite(fee) && fee > 0) totalTinybar += fee;
+      counted++;  // count every record (incl. 0-fee children) — keeps the
+                  // time-coverage extrapolation on a consistent population
+      const ts = parseFloat(String(t.consensus_timestamp || '0'));
+      if (Number.isFinite(ts) && ts > 0) lastSeenTs = ts;
+    }
+    pages++;
+    const next = data?.links?.next;
+    if (next) {
+      // links.next is a root-relative path (e.g. "/api/v1/transactions?...")
+      url = next.startsWith('http') ? next : `${HEDERA_MIRROR_BASE}${next}`;
+    } else {
+      url = null;
+      drained = true;
+    }
+  }
+
+  let totalHbar = totalTinybar / TINYBAR_PER_HBAR;
+  let estimated = false;
+
+  // Hit the page cap with window still undrained: scale up by the fraction of
+  // the window's time span we actually covered (order=desc means we covered
+  // [lastSeenTs, endTs]).
+  if (!drained && windowSpan && lastSeenTs > startNum) {
+    const coveredFraction = (endNum - lastSeenTs) / windowSpan;
+    if (coveredFraction > 0 && coveredFraction < 1) {
+      totalHbar = totalHbar / coveredFraction;
+      estimated = true;
+    }
+  }
+
+  return {
+    total_fees_hbar: sane(totalHbar),
+    tx_sampled:      counted,
+    estimated,
   };
 }
 
@@ -136,25 +255,68 @@ async function fetchHederaSupply() {
   };
 }
 
-// Public fetcher for HBAR — runs the two sub-fetches in parallel and
-// returns a composite object. Null fields where individual subfetches failed.
+// =============================================================================
+// KRAKEN TICKER — HBAR/USD spot price
+// =============================================================================
+// Pulled from Kraken's free public ticker (no auth) so the dashboard can
+// denominate the network-fee run-rate in USD. On-brand for the Kraken-CLI
+// stack, and supplementary: a price-fetch failure returns null and the card
+// simply falls back to the native ℏ figure. `c[0]` is the last trade price.
+// =============================================================================
+
+async function fetchHbarPriceUsd() {
+  const url = `${KRAKEN_TICKER_BASE}/0/public/Ticker?pair=HBARUSD`;
+  const data = await fetchJson(url);
+  if (Array.isArray(data?.error) && data.error.length > 0) {
+    throw new Error(`Kraken ticker error: ${data.error.join('; ')}`);
+  }
+  const result = data?.result || {};
+  // Kraken echoes the requested pair as the key, but grab defensively in case
+  // it ever canonicalizes to a variant.
+  const entry = result.HBARUSD || Object.values(result)[0] || null;
+  const last  = entry?.c?.[0];           // c = [last_trade_price, lot_volume]
+  const price = last != null ? parseFloat(last) : null;
+  return { hbar_usd: sane(price) };
+}
+
+// Public fetcher for HBAR — runs blocks + supply + USD price in parallel, then
+// sweeps fees across the block window (fees need the window bounds, so they run
+// after). Null fields where individual subfetches failed.
 export async function fetchHbarActivity() {
-  const [blocksResult, supplyResult] = await Promise.allSettled([
+  const [blocksResult, supplyResult, priceResult] = await Promise.allSettled([
     fetchHederaBlocks(),
     fetchHederaSupply(),
+    fetchHbarPriceUsd(),
   ]);
   const blocks = blocksResult.status === 'fulfilled' ? blocksResult.value : null;
   const supply = supplyResult.status === 'fulfilled' ? supplyResult.value : null;
+  const price  = priceResult.status  === 'fulfilled' ? priceResult.value  : null;
   const errors = [];
   if (blocksResult.status === 'rejected') errors.push(`blocks: ${blocksResult.reason?.message || blocksResult.reason}`);
   if (supplyResult.status === 'rejected') errors.push(`supply: ${supplyResult.reason?.message || supplyResult.reason}`);
-  // If BOTH failed we treat the whole HBAR feed as unavailable; null signals
-  // the pipeline to drop the context block entirely this watch.
+  if (priceResult.status  === 'rejected') errors.push(`price: ${priceResult.reason?.message || priceResult.reason}`);
+
+  // Fees are scoped to the block window, so they run AFTER blocks resolve.
+  // Supplementary: a fee-sweep failure is logged but never sinks the HBAR feed.
+  let fees = null;
+  if (blocks && blocks.oldest_ts_str && blocks.newest_ts_str) {
+    try {
+      fees = await fetchHederaFees(blocks.oldest_ts_str, blocks.newest_ts_str);
+    } catch (err) {
+      errors.push(`fees: ${err.message || String(err)}`);
+      fees = null;
+    }
+  }
+
+  // If BOTH core subfetches failed we treat the whole HBAR feed as unavailable;
+  // null signals the pipeline to drop the context block entirely this watch.
   if (!blocks && !supply) return { ok: false, errors };
   return {
     ok:     true,
     blocks, // null if that subfetch failed
     supply, // null if that subfetch failed
+    fees,   // { total_fees_hbar, tx_sampled, estimated } — null if unavailable
+    price,  // { hbar_usd } — null if the Kraken ticker was unavailable
     errors, // non-empty if partial
   };
 }

@@ -200,7 +200,10 @@ CREATE TABLE IF NOT EXISTS onchain_snapshots (
   hbar_block_count         INTEGER,         -- blocks in the sample window
   hbar_window_secs         REAL,            -- window time span in seconds
   hbar_total_tx            INTEGER,         -- sum of tx counts in window
-  hbar_total_gas_used      INTEGER,
+  hbar_total_gas_used      INTEGER,         -- EVM contract gas only (kept as a secondary DeFi signal)
+  hbar_total_fees_hbar     REAL,            -- total network fees paid across the window, all tx types (HBAR)
+  hbar_fees_estimated      INTEGER,         -- 1 if extrapolated (throughput spike exceeded the page cap), 0 if exact drain, NULL if feed down
+  hbar_price_usd           REAL,            -- HBAR/USD spot at snapshot time (Kraken ticker), denominates the USD fee run-rate
   hbar_tps_avg             REAL,
   hbar_newest_block        INTEGER,
   hbar_oldest_block        INTEGER,
@@ -277,6 +280,23 @@ export default class Ledger {
     ];
     for (const [colName, sql] of migrations) {
       if (!tradeCols.has(colName)) {
+        this.db.exec(sql);
+      }
+    }
+
+    // onchain_snapshots: hbar_total_fees_hbar added when we swapped the
+    // dashboard's EVM-only "gas used" metric for true all-activity network
+    // fees (every tx type pays an HBAR fee). Existing DBs need the ALTER.
+    const onchainCols = new Set(
+      this.db.prepare("PRAGMA table_info(onchain_snapshots)").all().map(c => c.name)
+    );
+    const onchainMigrations = [
+      ['hbar_total_fees_hbar', 'ALTER TABLE onchain_snapshots ADD COLUMN hbar_total_fees_hbar REAL'],
+      ['hbar_fees_estimated',  'ALTER TABLE onchain_snapshots ADD COLUMN hbar_fees_estimated INTEGER'],
+      ['hbar_price_usd',       'ALTER TABLE onchain_snapshots ADD COLUMN hbar_price_usd REAL'],
+    ];
+    for (const [colName, sql] of onchainMigrations) {
+      if (!onchainCols.has(colName)) {
         this.db.exec(sql);
       }
     }
@@ -523,12 +543,13 @@ export default class Ledger {
         INSERT INTO onchain_snapshots (
           run_id, ts_utc,
           hbar_status, hbar_block_count, hbar_window_secs, hbar_total_tx,
-          hbar_total_gas_used, hbar_tps_avg, hbar_newest_block, hbar_oldest_block,
-          hbar_total_supply, hbar_released_supply,
+          hbar_total_gas_used, hbar_total_fees_hbar, hbar_fees_estimated, hbar_tps_avg,
+          hbar_newest_block, hbar_oldest_block,
+          hbar_total_supply, hbar_released_supply, hbar_price_usd,
           dog_status, dog_holders, dog_transactions, dog_btc_volume_24h,
           dog_amount_volume_24h, dog_current_price_sats, dog_change_price_24h,
           dog_market_cap_btc, dog_market_cap_usd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
       // Latest on-chain snapshot — single most recent row across all runs.
       getLatestOnchainSnapshot: this.db.prepare(`
@@ -543,10 +564,11 @@ export default class Ledger {
       // snapshots where the relevant column is non-null.
       getOnchainHbarBaseline: this.db.prepare(`
         SELECT
-          AVG(hbar_tps_avg)        AS avg_tps,
-          AVG(hbar_total_tx)       AS avg_total_tx,
-          AVG(hbar_total_gas_used) AS avg_gas,
-          COUNT(*)                 AS sample_count
+          AVG(hbar_tps_avg)         AS avg_tps,
+          AVG(hbar_total_tx)        AS avg_total_tx,
+          AVG(hbar_total_gas_used)  AS avg_gas,
+          AVG(hbar_total_fees_hbar) AS avg_fees,
+          COUNT(*)                  AS sample_count
         FROM onchain_snapshots
         WHERE hbar_status = 'ok'
           AND hbar_tps_avg IS NOT NULL
@@ -688,7 +710,7 @@ export default class Ledger {
         if (open && open.level_low && Math.abs(open.level_low - price) / price <= PRICE_TOL) {
           this.stmts.touchThesis.run(ts, note, open.thesis_id);
         } else {
-          this.stmts.insertThesis.run(runId, ts, pair, 'entry_watch', direction, price, price, note);
+          this.stmts.insertThesis.run(runId, ts, pair, 'entry_watch', direction, price, price, note, ts);
         }
         touched++;
       }
@@ -863,12 +885,14 @@ export default class Ledger {
     const hbar = payload.hbar;
     const dog  = payload.dog;
 
-    // HBAR fields — flattened from the composite { blocks, supply, ok, errors }.
+    // HBAR fields — flattened from the composite { blocks, supply, fees, ok, errors }.
     const hbarStatus = hbar?.ok
       ? (hbar.blocks && hbar.supply ? 'ok' : 'partial')
       : 'failed';
     const blocks = hbar?.blocks || null;
     const supply = hbar?.supply || null;
+    const fees   = hbar?.fees   || null;   // { total_fees_hbar, tx_sampled, estimated }
+    const price  = hbar?.price  || null;   // { hbar_usd }
 
     // DOG fields — flattened from { stats, ok, errors }.
     const dogStatus = dog?.ok ? 'ok' : 'failed';
@@ -882,11 +906,14 @@ export default class Ledger {
       blocks?.window_secs    ?? null,
       blocks?.total_tx       ?? null,
       blocks?.total_gas_used ?? null,
+      fees?.total_fees_hbar  ?? null,
+      fees ? (fees.estimated ? 1 : 0) : null,
       blocks?.tps_avg        ?? null,
       blocks?.newest_block   ?? null,
       blocks?.oldest_block   ?? null,
       supply?.total_supply_hbar    ?? null,
       supply?.released_supply_hbar ?? null,
+      price?.hbar_usd              ?? null,
       dogStatus,
       dogStats?.holders             ?? null,
       dogStats?.transactions        ?? null,

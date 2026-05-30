@@ -277,6 +277,8 @@ function getLatestOnchain() {
       SELECT AVG(hbar_tps_avg)        AS avg_tps,
              AVG(hbar_total_tx)       AS avg_total_tx,
              AVG(hbar_total_gas_used) AS avg_gas,
+             AVG(hbar_total_fees_hbar) AS avg_fees,
+             COUNT(hbar_total_fees_hbar) AS fees_sample_count,
              COUNT(*)                 AS sample_count
       FROM onchain_snapshots
       WHERE hbar_status = 'ok'
@@ -705,14 +707,19 @@ app.get('/api/onchain', (req, res) => {
       window_secs:      latest.hbar_window_secs,
       total_tx:         latest.hbar_total_tx,
       total_gas_used:   latest.hbar_total_gas_used,
+      total_fees_hbar:  latest.hbar_total_fees_hbar,
+      fees_estimated:   latest.hbar_fees_estimated,
       tps_avg:          latest.hbar_tps_avg,
       newest_block:     latest.hbar_newest_block,
       total_supply:     latest.hbar_total_supply,
       released_supply: latest.hbar_released_supply,
+      price_usd:        latest.hbar_price_usd,
       baseline:         hbarBaseline && hbarBaseline.sample_count > 0 ? {
         avg_tps:        hbarBaseline.avg_tps,
         avg_total_tx:   hbarBaseline.avg_total_tx,
         avg_gas:        hbarBaseline.avg_gas,
+        avg_fees:       hbarBaseline.avg_fees,
+        fees_sample_count: hbarBaseline.fees_sample_count,
         sample_count:   hbarBaseline.sample_count,
         ready:          hbarBaseline.sample_count >= 6,
       } : null,

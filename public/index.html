@@ -2112,8 +2112,19 @@
           const winMin = (h.window_secs / 60).toFixed(1);
           rows.push(chainRow('Tx in window', `${h.total_tx.toLocaleString()} (${winMin} min)`, null));
         }
-        if (Number.isFinite(h.total_gas_used)) {
-          rows.push(chainRow('Gas used (window)', formatBigNum(h.total_gas_used), null));
+        if (Number.isFinite(h.total_fees_hbar) && Number.isFinite(h.window_secs) && h.window_secs > 0) {
+          const feesEst = h.fees_estimated === 1;
+          const rrHbarDay = h.total_fees_hbar * 86400 / h.window_secs;
+          const rrUsdDay = Number.isFinite(h.price_usd) ? rrHbarDay * h.price_usd : null;
+          const feesVal = rrUsdDay != null
+            ? `${feesEst ? '~' : ''}$${Math.round(rrUsdDay).toLocaleString()}/day`
+            : `${feesEst ? '~' : ''}${formatBigNum(rrHbarDay)} ℏ/day`;
+          const feesN = h.baseline ? (h.baseline.fees_sample_count || 0) : 0;
+          const feesReady = feesN >= 6;
+          const feesDelta = feesReady
+            ? { pct: formatDeltaPct(h.total_fees_hbar, h.baseline.avg_fees), baselineLabel: `7d (n=${feesN})` }
+            : (feesN > 0 ? { note: `baseline building (n=${feesN}/6)` } : { note: 'first observation' });
+          rows.push(chainRow('Network fees (run-rate)', feesVal, feesDelta));
         }
         if (Number.isFinite(h.released_supply) && Number.isFinite(h.total_supply)) {
           const circB = (h.released_supply / 1e9).toFixed(2);

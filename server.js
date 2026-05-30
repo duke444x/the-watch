@@ -781,6 +781,91 @@ app.get('/api/plank-walks', (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// /api/candles — OHLC candles via the Kraken CLI (the chart's price spine)
+// ---------------------------------------------------------------------------
+// Proxies `kraken ohlc <pair> --interval <n>` and reshapes to Lightweight
+// Charts candle format ({ time, open, high, low, close }, time = UTC seconds).
+// Cached ~60s per pair+interval. Same CLI that fills the trades feeds candles.
+// ---------------------------------------------------------------------------
+
+const CANDLE_INTERVALS = new Set([15, 60, 240, 1440]);  // 15m / 1h / 4h / 1d
+
+async function fetchCandles(pair, interval) {
+  return cachedAsync(`ohlc:${pair}:${interval}`, 60_000, async () => {
+    const data = await runKraken(['ohlc', pair, '--interval', String(interval), '-o', 'json']);
+    const rows = pickPair(data, pair);
+    if (!Array.isArray(rows)) return [];
+    // Kraken candle row: [time(s), open, high, low, close, vwap, volume, count]
+    return rows.map(c => ({
+      time:  Number(c[0]),
+      open:  Number(c[1]),
+      high:  Number(c[2]),
+      low:   Number(c[3]),
+      close: Number(c[4]),
+    })).filter(c =>
+      Number.isFinite(c.time) && Number.isFinite(c.open) &&
+      Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)
+    );
+  });
+}
+
+app.get('/api/candles', async (req, res) => {
+  try {
+    const pair = String(req.query.pair || '').toUpperCase();
+    const interval = parseInt(req.query.interval || '240', 10);
+    if (!PAIRS_ALL.includes(pair)) {
+      return res.status(400).json({ error: `unknown pair "${pair}"` });
+    }
+    if (!CANDLE_INTERVALS.has(interval)) {
+      return res.status(400).json({ error: `interval must be one of ${[...CANDLE_INTERVALS].join(', ')}` });
+    }
+    const candles = await fetchCandles(pair, interval);
+    res.json({ pair, interval, candles, ts: new Date().toISOString() });
+  } catch (e) {
+    console.error('[dashboard] /api/candles error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/theses — watched levels (entry_watch) per pair, for the chart overlay
+// ---------------------------------------------------------------------------
+// The levels Capt is watching: price, direction (accumulate/trim/watch), state
+// (watching/superseded/reached/resolved), and his note. Drawn as horizontal
+// lines on the chart — solid when watching, faded when superseded/resolved.
+// ---------------------------------------------------------------------------
+
+function getTheses(pair, limit) {
+  const conn = getDb();
+  if (!conn) return [];
+  const cols = `thesis_id, run_id, ts_utc, pair, kind, direction,
+                level_low, level_high, note, state,
+                trade_id, reached_run_id, resolved_run_id, updated_ts_utc`;
+  try {
+    if (pair) {
+      return conn.prepare(`SELECT ${cols} FROM theses WHERE pair = ? ORDER BY ts_utc DESC LIMIT ?`).all(pair, limit);
+    }
+    return conn.prepare(`SELECT ${cols} FROM theses ORDER BY ts_utc DESC LIMIT ?`).all(limit);
+  } catch {
+    return [];
+  }
+}
+
+app.get('/api/theses', (req, res) => {
+  try {
+    const pair = req.query.pair ? String(req.query.pair).toUpperCase() : null;
+    if (pair && !PAIRS_ALL.includes(pair)) {
+      return res.status(400).json({ error: `unknown pair "${pair}"` });
+    }
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    res.json({ theses: getTheses(pair, limit), ts: new Date().toISOString() });
+  } catch (e) {
+    console.error('[dashboard] /api/theses error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // =============================================================================
 // START
 // =============================================================================

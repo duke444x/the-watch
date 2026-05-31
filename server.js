@@ -39,8 +39,9 @@ const PAUSE_FLAG  = path.join(__dirname, 'data', 'PAUSED.flag');
 const PUBLIC_DIR  = path.join(__dirname, 'public');
 const HEDERA_NETWORK  = (process.env.HEDERA_NETWORK || 'mainnet').toLowerCase();
 const HEDERA_TOPIC_ID = process.env.HEDERA_TOPIC_ID || null;
+// [4c-server applied]
 
-const PAIRS_ALL = ['HBARUSD', 'BTCUSD', 'DOGUSD', 'SOLUSD', 'SUIUSD'];
+const PAIRS_ALL = ['HBARUSD', 'BTCUSD', 'DOGUSD'];
 
 // =============================================================================
 // LEDGER CONNECTION (read-only)

@@ -20,8 +20,6 @@
       --teal-glow:      rgba(45, 212, 191, 0.15);
       --coral:          #FB7185;
       --coral-glow:     rgba(251, 113, 133, 0.15);
-      --dog:            #FF4500;
-      --dog-glow:       rgba(255, 69, 0, 0.15);
       --gold:           #F9C015;
       --gold-glow:      rgba(249, 192, 21, 0.15);
       --rebel-red:      #E60000;
@@ -100,7 +98,7 @@
       background-color: var(--bg-deep);
       background-image: url('/plank-hero.png');
       background-size: cover;
-      background-position: center 74%;
+      background-position: center 60%;
       transition: transform 8s ease-out;
     }
     .hero:hover .hero-image {
@@ -446,7 +444,9 @@
     }
     .ticker.t-hbar  { --accent: var(--teal); }
     .ticker.t-btc   { --accent: var(--gold); }
-    .ticker.t-dog   { --accent: var(--dog); }
+    .ticker.t-dog   { --accent: var(--coral); }
+    .ticker.t-sol   { --accent: #9945FF; }
+    .ticker.t-sui   { --accent: #4DA2FF; }
 
     /* ─── Stack Progress section ─────────────────────────────────────── */
     .stack-grid {
@@ -482,15 +482,15 @@
     /* Per-pair structured read from the most recent watch. Stance badge +
        confidence + three-timeframe signal alignment + two factor bullets
        in Capt's voice. Cards are grouped semantically: stack targets
-       (HBAR, DOG) on top, the BTC anchor below — mirroring the
-       agent architecture (what we trade vs. the regime we read). */
+       (HBAR, DOG) on top, vehicles (BTC, SOL, SUI) below — mirroring the
+       agent architecture (what we want more of vs. what we use to get it). */
     .reads-stack,
-    .reads-anchor {
+    .reads-vehicles {
       display: grid;
       gap: 14px;
     }
     .reads-stack    { grid-template-columns: repeat(2, 1fr); margin-bottom: 22px; }
-    .reads-anchor { grid-template-columns: minmax(0, calc(50% - 7px)); justify-content: center; }
+    .reads-vehicles { grid-template-columns: repeat(3, 1fr); }
     .reads-divider {
       font-family: var(--mono);
       font-size: 12px;
@@ -513,10 +513,10 @@
     .reads-divider.stack-targets { color: var(--gold); }
     @media (max-width: 920px) {
       .reads-stack    { grid-template-columns: 1fr; }
-      .reads-anchor { grid-template-columns: minmax(0, calc(50% - 7px)); justify-content: center; }
+      .reads-vehicles { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 600px) {
-      .reads-anchor { grid-template-columns: 1fr; }
+      .reads-vehicles { grid-template-columns: 1fr; }
     }
     .read-card {
       background: var(--bg-card-hi);
@@ -539,7 +539,9 @@
     }
     .read-card.t-hbar { --accent: var(--teal); }
     .read-card.t-btc  { --accent: var(--gold); }
-    .read-card.t-dog  { --accent: var(--dog); }
+    .read-card.t-dog  { --accent: var(--coral); }
+    .read-card.t-sol  { --accent: #9945FF; }
+    .read-card.t-sui  { --accent: #4DA2FF; }
     .read-card:hover {
       border-color: var(--border-hi);
       transform: translateY(-1px);
@@ -734,7 +736,7 @@
       background: var(--accent, var(--border));
     }
     .chain-card.t-hbar { --accent: var(--teal); }
-    .chain-card.t-dog  { --accent: var(--dog); }
+    .chain-card.t-dog  { --accent: var(--coral); }
     .chain-card:hover {
       border-color: var(--border-hi);
       transform: translateY(-1px);
@@ -1023,93 +1025,50 @@
        a tighter horizontal strip. Same per-pair data, less visual weight. */
     .markets-strip {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 920px) {
+      .markets-strip { grid-template-columns: repeat(3, 1fr); }
     }
     @media (max-width: 600px) {
-      .markets-strip { grid-template-columns: 1fr; }
+      .markets-strip { grid-template-columns: repeat(2, 1fr); }
     }
     .market-mini {
       background: var(--bg-card-hi);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 16px 13px;
-      position: relative;
-      overflow: hidden;
+      border-left: 2px solid var(--accent, var(--border));
+      border-radius: 6px;
+      padding: 10px 12px 9px;
       display: flex;
       flex-direction: column;
-      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      gap: 2px;
     }
-    .market-mini::before {
-      content: '';
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 3px;
-      background: var(--accent, var(--border));
-    }
-    .market-mini:hover {
-      transform: translateY(-3px);
-      border-color: var(--accent, var(--border-hi));
-      box-shadow: 0 12px 28px -16px var(--accent-glow, transparent);
-    }
-    .market-mini.t-hbar { --accent: var(--teal); --accent-glow: var(--teal); }
-    .market-mini.t-btc  { --accent: var(--gold); --accent-glow: var(--gold); }
-    .market-mini.t-dog  { --accent: var(--dog); --accent-glow: var(--dog); }
-    .market-mini .mm-top {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      margin-bottom: 9px;
-    }
-    .market-mini .mm-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--accent, var(--text-dim));
-      box-shadow: 0 0 9px -1px var(--accent);
-      flex: none;
-    }
+    .market-mini.t-hbar { --accent: var(--teal); }
+    .market-mini.t-btc  { --accent: var(--gold); }
+    .market-mini.t-dog  { --accent: var(--coral); }
+    .market-mini.t-sol  { --accent: #9945FF; }
+    .market-mini.t-sui  { --accent: #4DA2FF; }
     .market-mini .mm-sym {
-      font-family: var(--mono);
-      font-size: 11.5px;
+      font-size: 10.5px;
       font-weight: 700;
-      letter-spacing: 1px;
-      color: var(--accent, var(--text-primary));
-    }
-    .market-mini .mm-tag {
-      margin-left: auto;
-      font-family: var(--mono);
-      font-size: 9px;
-      letter-spacing: 0.8px;
-      color: var(--text-dim);
-      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-primary);
     }
     .market-mini .mm-price {
       font-family: var(--mono);
-      font-size: 22px;
-      font-weight: 700;
+      font-size: 14px;
+      font-weight: 600;
       color: var(--text-primary);
-      letter-spacing: -0.4px;
-      line-height: 1;
-    }
-    .market-mini .mm-row {
-      margin-top: 11px;
-      display: flex;
-      align-items: center;
+      letter-spacing: -0.2px;
     }
     .market-mini .mm-change {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
       font-family: var(--mono);
-      font-size: 11.5px;
-      font-weight: 700;
-      padding: 4px 8px;
-      border-radius: 6px;
+      font-size: 10.5px;
+      font-weight: 600;
     }
-    .market-mini .mm-change svg { width: 9px; height: 9px; }
-    .market-mini .mm-change.pos { color: var(--teal); background: var(--teal-glow); }
-    .market-mini .mm-change.neg { color: var(--coral); background: var(--coral-glow); }
-    .market-mini .mm-change.dim { color: var(--text-dim); background: transparent; padding-left: 0; }
+    .market-mini .mm-change.pos { color: var(--teal); }
+    .market-mini .mm-change.neg { color: var(--coral); }
 
     /* ─── Section ──────────────────────────────────────────────────────── */
     section {
@@ -1144,28 +1103,15 @@
 
     /* ─── The Reckoning — Captain's Logbook ────────────────── */
     .reck-sub { color: var(--text-muted); font-size: 12px; margin: -8px 0 16px; font-style: italic; }
-    .reck-assets { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 14px; margin-bottom: 18px; }
-    .reck-card { background: var(--bg-card-hi); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; position: relative; overflow: hidden; transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
-    .reck-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent, var(--border)); }
-    .reck-card:hover { transform: translateY(-3px); border-color: var(--accent, var(--border-hi)); box-shadow: 0 12px 28px -16px var(--accent); }
-    .reck-card.t-hbar { --accent: var(--teal); }
-    .reck-card.t-btc  { --accent: var(--gold); }
-    .reck-card.t-dog  { --accent: var(--dog); }
-    .rc-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
-    .rc-pair { font-family: var(--mono); font-weight: 700; font-size: 14px; letter-spacing: 0.5px; color: var(--text-primary); }
-    .rc-wr { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.6px; color: var(--text-dim); text-transform: uppercase; }
-    .rc-rec { display: flex; align-items: baseline; gap: 7px; margin-bottom: 9px; font-family: var(--mono); }
-    .rc-rec b { font-size: 17px; font-weight: 700; }
-    .rc-rec .w { color: var(--teal); } .rc-rec .l { color: var(--coral); }
-    .rc-rec .sep, .rc-rec .n { color: var(--text-dim); }
-    .rc-rec .rc-detail { font-size: 11px; color: var(--text-muted); }
-    .rc-bar { display: flex; gap: 3px; height: 5px; margin-bottom: 12px; }
-    .rc-bar i { flex: 1; border-radius: 2px; background: var(--border); }
-    .rc-bar i.win { background: var(--teal); } .rc-bar i.loss { background: var(--coral); }
-    .rc-net { font-family: var(--mono); font-weight: 700; font-size: 18px; letter-spacing: -0.3px; line-height: 1; }
-    .rc-net.pos { color: var(--teal); } .rc-net.neg { color: var(--coral); } .rc-net.dim { color: var(--text-muted); }
-    .rc-net .u { font-size: 11px; font-weight: 500; color: var(--text-dim); margin-left: 4px; }
-    .rc-held { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); margin-top: 10px; }
+    .reck-assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .reck-card { background: var(--bg-card-hi); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; position: relative; overflow: hidden; }
+    .reck-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border); }
+    .reck-card.up::before { background: var(--teal); }
+    .reck-card.down::before { background: var(--coral); }
+    .reck-card-pair { font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: 0.5px; }
+    .reck-card-rec { font-family: var(--mono); font-size: 12px; margin-top: 4px; }
+    .reck-card-net { font-family: var(--mono); font-weight: 700; font-size: 16px; margin-top: 6px; }
+    .reck-card-held { font-family: var(--mono); font-size: 10.5px; margin-top: 2px; }
     .reck-log { display: flex; flex-direction: column; gap: 6px; }
     .reck-row { display: grid; grid-template-columns: 24px 64px 1fr auto auto auto; gap: 10px; align-items: center; padding: 8px 11px; background: var(--bg-card-hi); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; font-family: var(--mono); }
     .reck-row .reck-verdict { font-weight: 700; text-align: center; font-size: 13px; }
@@ -1503,19 +1449,6 @@
       color: var(--text-dim);
       letter-spacing: 1px;
     }
-    /* ─── Pop layer — accent wash + rail glow + lift, site-wide ───────── */
-    .stat, .read-card, .market-mini, .reck-card, .chain-card, .position {
-      background-image: radial-gradient(135% 95% at 0% 0%, color-mix(in srgb, var(--accent, transparent) 9%, transparent), transparent 55%);
-      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-    }
-    .stat::before, .read-card::before, .market-mini::before, .reck-card::before, .chain-card::before {
-      box-shadow: 0 0 14px -1px var(--accent, transparent);
-    }
-    .stat:hover, .read-card:hover, .market-mini:hover, .reck-card:hover, .chain-card:hover, .position:hover {
-      transform: translateY(-3px);
-      border-color: var(--accent, var(--border-hi));
-      box-shadow: 0 14px 32px -16px color-mix(in srgb, var(--accent, transparent) 45%, transparent);
-    }
   </style>
 </head>
 <body>
@@ -1771,9 +1704,11 @@
     }
 
     const PAIR_META = {
-      HBARUSD:  { symbol: '$HBAR', desc: 'HBARBARIANS · STACK TARGET',  cls: 't-hbar' },
-      BTCUSD:   { symbol: '$BTC',  desc: 'THE RESERVE · ANCHOR',        cls: 't-btc' },
-      DOGUSD:   { symbol: '$DOG',  desc: 'DOG ARMY · STACK TARGET',     cls: 't-dog' },
+      HBARUSD:  { symbol: 'HBAR',  desc: 'HBARBARIANS · STACK TARGET',  cls: 't-hbar' },
+      BTCUSD:   { symbol: 'BTC',   desc: 'THE RESERVE · VEHICLE',       cls: 't-btc' },
+      DOGUSD:   { symbol: 'DOG',   desc: 'DOG ARMY · STACK TARGET',     cls: 't-dog' },
+      SOLUSD:   { symbol: 'SOL',   desc: 'SOLANA · VEHICLE',            cls: 't-sol' },
+      SUIUSD:   { symbol: 'SUI',   desc: 'SUI · VEHICLE',               cls: 't-sui' },
     };
 
     function renderTickers(tickers) {
@@ -1787,19 +1722,14 @@
       if (countEl) countEl.textContent = '(' + tickers.length + ' pair' + (tickers.length === 1 ? '' : 's') + ')';
       container.innerHTML = '<div class="markets-strip">' + tickers.map(t => {
         const meta = PAIR_META[t.pair] || { symbol: t.pair, desc: '', cls: '' };
-        const mmTag = (String(meta.desc).split('\u00b7').pop() || '').trim();
-        const up = (t.pct_change_24h || 0) >= 0;
-        const arrow = up
-          ? '<svg viewBox="0 0 10 10"><path d="M5 1L9 8H1Z" fill="currentColor"/></svg>'
-          : '<svg viewBox="0 0 10 10"><path d="M5 9L1 2H9Z" fill="currentColor"/></svg>';
         const changeHtml = t.pct_change_24h !== null
-          ? '<span class="mm-change ' + pnlClass(t.pct_change_24h) + '">' + arrow + fmtPct(t.pct_change_24h) + '</span>'
-          : '<span class="mm-change dim">\u2014</span>';
+          ? '<span class="mm-change ' + pnlClass(t.pct_change_24h) + '">' + fmtPct(t.pct_change_24h) + '</span>'
+          : '<span class="mm-change dim">—</span>';
         return `
           <div class="market-mini ${meta.cls}">
-            <div class="mm-top"><span class="mm-dot"></span><span class="mm-sym">${meta.symbol}</span><span class="mm-tag">${mmTag}</span></div>
+            <span class="mm-sym">${meta.symbol}</span>
             <span class="mm-price">${fmtPrice(t.last)}</span>
-            <div class="mm-row">${changeHtml}</div>
+            ${changeHtml}
           </div>`;
       }).join('') + '</div>';
     }
@@ -1962,25 +1892,18 @@
       const assetsEl = document.getElementById('reck-assets');
       if (assetsEl) assetsEl.innerHTML = pairs.map((p) => {
         const sym = p.pair.replace('USD', '');
+        const tone = p.net_tokens > 0 ? 'up' : p.net_tokens < 0 ? 'down' : '';
         const netCls = p.net_tokens > 0 ? 'pos' : p.net_tokens < 0 ? 'neg' : 'dim';
-        const accentCls = 't-' + sym.toLowerCase();
-        const wr = p.decided > 0 ? Math.round(p.win_rate * 100) + '% win' : 'no closes yet';
-        const detail = '(' + p.wins + ' / ' + p.decided + ')';
-        let pips = '';
-        for (let i = 0; i < p.wins; i++)   pips += '<i class="win"></i>';
-        for (let i = 0; i < p.losses; i++) pips += '<i class="loss"></i>';
-        for (let i = p.wins + p.losses; i < 3; i++) pips += '<i></i>';
-        const recHtml = p.decided > 0
-          ? '<b class="w">' + p.wins + '</b><b class="sep">\u2013</b><b class="l">' + p.losses + '</b>'
-          : '<b class="n">0</b><b class="sep">\u2013</b><b class="n">0</b>';
+        const rate = p.decided > 0
+          ? Math.round(p.win_rate * 100) + '% (' + p.wins + '/' + p.decided + ')'
+          : '(' + p.wins + '/' + p.decided + ')';
         const held = (p.held_tokens && p.held_tokens > 0)
-          ? '<div class="rc-held">held ' + fmtTok(p.held_tokens) + ' ' + sym + '</div>'
+          ? '<div class="reck-card-held dim">held ' + fmtTok(p.held_tokens) + ' ' + sym + '</div>'
           : '';
-        return '<div class="reck-card ' + accentCls + '">'
-          + '<div class="rc-head"><span class="rc-pair">$' + sym + '</span><span class="rc-wr">' + wr + '</span></div>'
-          + '<div class="rc-rec">' + recHtml + '<span class="rc-detail">' + detail + '</span></div>'
-          + '<div class="rc-bar">' + pips + '</div>'
-          + '<div class="rc-net ' + netCls + '">' + sTok(p.net_tokens) + '<span class="u">' + sym + '</span></div>'
+        return '<div class="reck-card ' + tone + '">'
+          + '<div class="reck-card-pair">' + sym + '</div>'
+          + '<div class="reck-card-rec"><span class="pos">' + p.wins + '</span>-<span class="neg">' + p.losses + '</span> <span class="dim">' + rate + '</span></div>'
+          + '<div class="reck-card-net ' + netCls + '">' + sTok(p.net_tokens) + ' ' + sym + '</div>'
           + held
           + '</div>';
       }).join('');
@@ -2352,7 +2275,7 @@
     // Reasoning panel ("Capt's Read") — per-pair stance / confidence /
     // multi-timeframe signal alignment / two factor bullets in Capt's voice.
     // Cards mirror the markets ticker layout (same pair accent colors via
-    // the .t-hbar / .t-btc / .t-dog modifier classes).
+    // the .t-hbar / .t-btc / .t-dog / .t-sol / .t-sui modifier classes).
     const STANCE_LABEL = {
       stack:  'STACK',
       buy:    'BUY',
@@ -2405,10 +2328,10 @@
       }
 
       // Two semantic rows: stack targets first (what we're trying to grow),
-      // then the BTC anchor (the regime we read, not trade). This mirrors the
-      // agent's own architecture — see DECISION_SYSTEM_PROMPT in watch.js.
-      const STACK_PAIRS   = ['HBARUSD', 'DOGUSD'];  /* [4c2-anchor applied] */  /* [4c-dashboard applied] */
-      const ANCHOR_PAIRS = ['BTCUSD'];
+      // then vehicles (what we're using to grow it). This mirrors the agent's
+      // own architecture — see DECISION_SYSTEM_PROMPT in watch.js.
+      const STACK_PAIRS   = ['HBARUSD', 'DOGUSD'];
+      const VEHICLE_PAIRS = ['BTCUSD', 'SOLUSD', 'SUIUSD'];
       const byPair = {};
       for (const r of reasoning.pairs || []) byPair[r.pair] = r;
 
@@ -2470,19 +2393,19 @@
       };
 
       const stackCards   = STACK_PAIRS.map(cardFor).join('');
-      const anchorCards = ANCHOR_PAIRS.map(cardFor).join('');
+      const vehicleCards = VEHICLE_PAIRS.map(cardFor).join('');
 
       container.className = '';
       container.innerHTML = `
         <div class="reads-divider stack-targets">Stack targets · what we're growing</div>
         <div class="reads-stack">${stackCards}</div>
-        <div class="reads-divider">Anchor · the regime we read, not trade</div>
-        <div class="reads-anchor">${anchorCards}</div>
+        <div class="reads-divider">Vehicles · what we're using to grow it</div>
+        <div class="reads-vehicles">${vehicleCards}</div>
       `;
 
       // Compact status summary in the section header — counts pairs that
       // actually have a fresh read this fire.
-      const allPairs = [...STACK_PAIRS, ...ANCHOR_PAIRS];
+      const allPairs = [...STACK_PAIRS, ...VEHICLE_PAIRS];
       const fresh = allPairs.filter(p => byPair[p]).length;
       status.textContent = `${fresh}/5 pairs · last read ${fmtCtTime(reasoning.ts || (reasoning.pairs?.[0]?.ts) || new Date().toISOString())}`;
     }
@@ -2806,7 +2729,7 @@
     }
 
     // ─── The Chart — price + watched levels + fills (Kraken-CLI spine) ───
-    const THESIS_PAIRS = ['BTCUSD','HBARUSD','DOGUSD'];
+    const THESIS_PAIRS = ['BTCUSD','HBARUSD','DOGUSD','SOLUSD','SUIUSD'];
     const THESIS_TFS = [{ label:'15m', value:15 }, { label:'4h', value:240 }, { label:'1d', value:1440 }];
     let tChart = null, tSeries = null, tPriceLines = [], tTradeSeries = [], tTrades = [], tPrec = 2, tTooltip = null, tLastView = '';
     let tPair = 'BTCUSD', tInterval = 240;
@@ -2830,7 +2753,7 @@
       });
       const pairWrap = document.getElementById('thesis-pairs');
       pairWrap.innerHTML = THESIS_PAIRS.map(p =>
-        `<button class="seg-btn${p===tPair?' active':''}" data-pair="${p}">$${p.replace('USD','')}</button>`).join('');
+        `<button class="seg-btn${p===tPair?' active':''}" data-pair="${p}">${p.replace('USD','')}</button>`).join('');
       pairWrap.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
         tPair = b.dataset.pair;
         pairWrap.querySelectorAll('button').forEach(x => x.classList.toggle('active', x===b));
@@ -3001,7 +2924,7 @@
           if (candles.length > visN) tChart.timeScale().setVisibleLogicalRange({ from: candles.length - visN, to: candles.length + 3 });
           else tChart.timeScale().fitContent();
         }
-        if (statusEl) statusEl.textContent = `$${tPair.replace('USD','')} · ${candles.length} candles`;
+        if (statusEl) statusEl.textContent = `${tPair.replace('USD','')} · ${candles.length} candles`;
       } catch (e) {
         if (statusEl) statusEl.textContent = 'chart unavailable';
         console.error('thesis chart failed:', e);

@@ -1,5 +1,5 @@
 // =============================================================================
-// THE WATCH v10 — Six-pair watch + SQLite ledger + scheduler-aware --source
+// THE WATCH v11 — Three-pair watch (HBAR/DOG trade, BTC anchor) + SQLite ledger + scheduler-aware --source
 // + Three-channel webhook routing (via shared webhooks.js)
 // + Exit level extraction (step 5a) + Exit-check awareness (step 5b)
 // + Dynamic liquidity tiering + Hedera ecosystem cluster awareness
@@ -20,16 +20,22 @@ import {
   postMarkerUpdate,
   postAdminEvent,
 } from './webhooks.js';
+import { attestRunNow, verifyUrl, sweepPendingAttestations } from './attest.js';
 
 dotenv.config({ quiet: true });
+// [4b-forceblock applied]
+// [4b-labels applied]
+// [4b-prompt applied]
+// [4b-universe applied]
 
-// Trading universe — Composition B. Stacking targets: HBAR + DOG.
-// Trading vehicles: BTC (deep benchmark), SOL (independent L1 / memecoin cycles),
-// SUI (emerging L1 / DeFi). HTS tokens (SAUCE/GIB/PACK/BONZO) live in the
-// Capt. Crawl bot's lookup tool universe but not here — they're too thin to
-// trade meaningfully against the stacking goal.
-const PAIRS = ['HBARUSD', 'BTCUSD', 'DOGUSD', 'SOLUSD', 'SUIUSD'];
-const SYMS  = ['HBAR',    'BTC',    'DOG',    'SOL',    'SUI'];
+// Trading universe — 4b: HBAR/DOG stacking + USDC park + BTC anchor.
+// Stacking targets (the ONLY tradeable/trimmable pairs): HBAR + DOG.
+// BTC: regime anchor and commentary only — read every watch, never traded
+// (enter is blocked in the parser + prompt). USDC is the neutral park
+// (cash-as-neutral; no vehicle trades). SOL/SUI removed entirely in 4b.
+// HTS tokens (SAUCE/GIB/PACK/BONZO) live in Capt. Crawl's lookup universe, not here.
+const PAIRS = ['HBARUSD', 'BTCUSD', 'DOGUSD'];
+const SYMS  = ['HBAR',    'BTC',    'DOG'];
 const STACK_TARGETS = ['HBAR', 'DOG'];  // the tokens we measure stacking against
 const OHLC_INTERVAL = 15;
 const LOGS_DIR = './logs';
@@ -95,6 +101,7 @@ const VALID_PAIRS = PAIRS;
 function parseArgs() {
   const args = process.argv.slice(2);
   let forcedEntry = null;
+  let forcedTrim = null;
   let source = 'organic';  // default — manual `node watch.js`
 
   // --source <name>  (used by the scheduler to mark scheduled fires)
@@ -122,11 +129,30 @@ function parseArgs() {
       console.error(`Invalid size: ${size}. Must be one of: rail, one_out, two_out`);
       process.exit(1);
     }
+    if (String(pair).toUpperCase() === 'BTCUSD') {
+      console.error('--force-enter rejected: BTC is anchor/commentary only in 4b. Use HBARUSD or DOGUSD.');
+      process.exit(1);
+    }
     forcedEntry = { pair, size };
     source = 'forced';  // --force-enter always wins the source label
   }
 
-  return { forcedEntry, source };
+  // --force-trim <trade_id> <fraction>  (manual test of the trim execution path)
+  const tIdx = args.indexOf('--force-trim');
+  if (tIdx !== -1) {
+    const tradeId = parseInt(args[tIdx + 1], 10);
+    const fraction = parseFloat(args[tIdx + 2]);
+    if (!Number.isInteger(tradeId) || tradeId <= 0 || !Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) {
+      console.error('Usage: node watch.js --force-trim <trade_id> <fraction> [--source <name>]');
+      console.error('  trade_id: a positive integer from YOUR OPEN POSITIONS');
+      console.error('  fraction: decimal strictly between 0 and 1 (e.g. 0.25 trims 25%)');
+      process.exit(1);
+    }
+    forcedTrim = { trade_id: tradeId, fraction };
+    source = 'forced';
+  }
+
+  return { forcedEntry, forcedTrim, source, quiet: args.includes('--quiet') };
 }
 
 // =============================================================================
@@ -138,21 +164,33 @@ function parseArgs() {
 // can — with explicit guardrails against whipsaw.
 // =============================================================================
 
-const DECISION_SYSTEM_PROMPT = `You are Capt. Crawl operating The Watch's portfolio decision pipeline. You manage one paper account with up to ~$10,000 of capital, deployed across six pairs.
+const DECISION_SYSTEM_PROMPT = `You are Capt. Crawl operating The Watch's portfolio decision pipeline. You manage one paper account with up to ~$10,000 of capital, deployed across three pairs: two stacking targets you trade (HBAR, DOG) plus BTC, which you read every watch as a regime anchor but never trade.
 
 # THE REAL GOAL — STACK HBAR + DOG
 
 Your job is NOT to maximize dollar P&L for its own sake. Your job is to *end up holding more HBAR and DOG than you started with* — to stack the two core tokens. Dollar P&L is a means; HBAR and DOG quantity is the end.
 
-Important: this does NOT mean "never sell HBAR or DOG." Quite the opposite. The whole point is that you're free to rotate IN AND OUT of HBAR and DOG (and through BTC / SOL / SUI) as often as the setups warrant — as long as the cumulative effect is that you END UP HOLDING MORE HBAR AND DOG than you would have by buying and holding.
+Important: this does NOT mean "never sell HBAR or DOG." Quite the opposite. The whole point is that you're free to rotate IN AND OUT of HBAR and DOG (and to park in USDC between setups) as often as the setups warrant — as long as the cumulative effect is that you END UP HOLDING MORE HBAR AND DOG than you would have by buying and holding.
 
-Selling HBAR at $0.10 and buying back at $0.085 ≠ "making 15% dollars" — it's *making more HBAR*. Rotating HBAR → SOL → HBAR and ending the loop with +500 HBAR is a win even if the dollar amount is the same. Rotating HBAR → SOL → HBAR and ending with -100 HBAR is a loss even if you "made dollars" along the way, because the stack went backward.
+Selling HBAR at $0.10 and buying back at $0.085 ≠ "making 15% dollars" — it's *making more HBAR*. Rotating HBAR into USDC and back into more HBAR, ending the loop with +500 HBAR, is a win even if the dollar amount is the same. The same round trip ending with -100 HBAR is a loss even if you "made dollars" along the way, because the stack went backward.
 
-The two stacking targets are **HBAR** and **DOG**. The three trading vehicles are **BTC**, **SOL**, and **SUI** — these exist to generate dollar profit that gets cycled back into more HBAR and DOG, or to give you a place to park capital when HBAR / DOG are extended and ready to be bought cheaper. You're not trying to *accumulate* BTC / SOL / SUI long-term; you're trying to *use* them to grow the HBAR + DOG stack.
+The two stacking targets are **HBAR** and **DOG** - the only pairs you trade. There are no trading vehicles. When HBAR and DOG are extended and you want to take profit or wait for a cheaper entry, your neutral park is **USDC** (cash-as-neutral) - not another coin. **BTC** is your regime anchor: you read it every watch because when BTC moves everything moves, but you never take a position in it. Dollar profit exists only to be cycled back into more HBAR and DOG.
 
 You'll see STACK PROGRESS in the snapshot — it shows how many HBAR and DOG your current equity would buy at current prices, compared to baseline. That's the scoreboard. It can go up even when dollar PnL is flat (if HBAR or DOG dropped relative to USD), and it can go down even when dollar PnL is positive (if you didn't capture the rotation back into the stacking tokens). Read it that way.
 
 You're operating on paper right now, but the discipline you build here is the same discipline that runs the real-money version later.
+
+# THE CORE STACK — NEVER SIT IN ALL CASH
+
+A stacking agent holds its stack. Being 100% cash is the one default a stacker should never settle into — cash stacks nothing, and it leaves you nothing to rotate from. So you carry a CORE: a standing base position in HBAR + DOG that you hold through the chop and trade *around*, not *out of*.
+
+- Target core: roughly 35% of the account in the stacking tokens, about 60/40 HBAR/DOG by value. The other ~65% is satellite capital - dry powder for tactical HBAR/DOG entries and rotation, parked in USDC when idle.
+- The core is a FLOOR, not a high-conviction setup. You don't wait for a perfect base to hold your own home chain. If you're under-stacked — starting from cash, or exits left you light — building the core back toward target is a valid, encouraged action on its own. Scale in on weakness across a few watches rather than chasing green, but get stacked and stay stacked.
+- "Default to inaction" governs the SATELLITE layer — a new *tactical* position is default-no without a named edge. It does NOT license sitting in all cash. If the core is below target, the default is to keep building it, sized sanely and liquidity-aware.
+- Trimming (below) sells SLICES of the core into real rips with a named rebuy — it never takes the core to zero. The core is the bag you came to hold.
+- Usual sizing discipline still holds: stay under ~50% deployed across positions, lighter in thin books, scale in rather than lump it all at once.
+
+STACK PROGRESS is still the scoreboard — more HBAR and DOG than baseline. The core is how you make sure you're actually in the game to move it.
 
 # YOUR JOB EACH WATCH
 
@@ -174,7 +212,7 @@ Most watches change nothing, and that's right. You're not paid to be busy. But y
 
 Stacking isn't only buying. When HBAR or DOG rips hard — parabolic, pinned near the top of its range, extended well past the pack — trimming a SLICE of the bag is a stack move, not a betrayal, as long as the dollars come home as more tokens.
 - Trim the rip, buy the retrace back lower — more coins for the same dollars.
-- Trim the rip, rotate into a sibling that hasn't run yet and is setting up (DOG napping while HBAR rips), or park it in a vehicle.
+- Trim the rip, rotate into a sibling that hasn't run yet and is setting up (DOG napping while HBAR rips), or park it in USDC.
 
 Rules that keep this discipline and not panic-selling your own conviction:
 - TRIM, never dump. You keep a base — you're a holder, not a tourist. A slice of the bag, never the whole bag; zero on a stacking target is off the table.
@@ -306,7 +344,7 @@ These aren't rules, they're frames. Use the ones that fit; ignore the ones that 
 
 *Mean reversion vs momentum*: At range extremes (top/bottom of 7d or 90d range), mean reversion has higher base rates. In the middle of a trend, momentum continuation does. The "% of range" numbers in the snapshot tell you where you are.
 
-*Relative strength / weakness in correlated pairs*: When DOG outperforms BTC materially, or HBAR outperforms the broader risk-on tape, or SOL diverges meaningfully from BTC, that's a real signal. Take it as information about flows, not as a recommendation. Don't force the rotation if the thesis isn't otherwise clean.
+*Relative strength / weakness in correlated pairs*: When DOG outperforms BTC materially, or HBAR outperforms the broader risk-on tape, that's a real signal. Take it as information about flows, not as a recommendation. Don't force the rotation if the thesis isn't otherwise clean.
 
 *Asymmetry over conviction*: A 1:3 reward-to-risk setup at low conviction often beats a 1:1 setup at high conviction. Look for trades where the invalidation is close and the upside is plausible — not just trades you "feel" good about.
 
@@ -316,11 +354,7 @@ DOG-specific: DOG is a Bitcoin Runes token. Its setups live inside the BTC tape.
 
 HBAR-specific: HBAR moves on Hedera ecosystem narratives — enterprise partnership news, Hedera council activity, SaucerSwap / Bonzo TVL trends, HederaCon event cycles. It has its own catalysts that don't necessarily track BTC. Treat HBAR as a small-cap with idiosyncratic moves, not as a BTC beta.
 
-SOL-specific: SOL has its own rhythm driven by Solana ecosystem activity — memecoin cycles (PEPE/WIF/BONK-style runs that send capital through SOL), Solana DeFi growth, NFT volume. Often diverges from BTC for days at a time. A SOL setup is most valuable when BTC is chopping and SOL has its own thing going on.
-
-SUI-specific: Emerging L1, smaller cap, more volatile. Driven by Sui ecosystem narratives — DeepBook DEX activity, Walrus storage launches, gaming integrations. Reads more like a beta-amplifier of broader risk-on sentiment than a market-of-its-own. Treat SUI moves with the volatility-respect a smaller cap deserves.
-
-The asymmetry to look for: BTC is the deepest book, SOL has the most independent narratives, SUI has the most volatility. Each is a different *kind* of trade. HBAR and DOG are what you ultimately want to own.
+BTC context: BTC is the deepest book and the regime anchor for the whole universe - when BTC moves, HBAR and DOG move. You read BTC every watch for that regime signal, but you do not trade it. HBAR and DOG are what you ultimately want to own.
 
 # WHAT TO REJECT
 
@@ -341,21 +375,28 @@ The asymmetry to look for: BTC is the deepest book, SOL has the most independent
 
 {
   "summary": "<one or two sentences explaining the overall watch read — what you saw across the timeframes, what (if anything) you changed, and why>",
-  "pair_reads": { <REQUIRED — one entry for every one of the five pairs; see PAIR_READS section below> },
+  "pair_reads": { <REQUIRED — one entry for every one of the three pairs (HBARUSD, BTCUSD, DOGUSD); see PAIR_READS section below> },
   "actions": [ <zero or more action objects> ]
 }
 
-CLOSE action shape:
+CLOSE action shape (exits the ENTIRE position — to sell only a slice and keep a base, use TRIM):
 {
   "type": "close",
   "trade_id": <integer — exact trade_id from YOUR OPEN POSITIONS>,
   "rationale": "<one sentence on why this position is being closed now (must reference what changed, not vibes)>"
 }
 
+TRIM action shape (partial close — sell a SLICE of a position into a rip and keep the rest stacking):
+{
+  "type": "trim",
+  "trade_id": <integer — exact trade_id from YOUR OPEN POSITIONS>,
+  "fraction": <decimal strictly between 0 and 1 — the slice to sell; e.g. 0.3 sells 30% and keeps 70%>,
+  "rationale": "<one sentence: the rip you're trimming into and your named rebuy zone or rotation target>"
+}
 ENTER action shape:
 {
   "type": "enter",
-  "pair": "HBARUSD" | "BTCUSD" | "DOGUSD" | "SOLUSD" | "SUIUSD",
+  "pair": "HBARUSD" | "DOGUSD",
   "side": "buy",
   "size": "rail" | "one_out" | "two_out",
   "thesis": "<two to three sentences: the setup across timeframes, the entry zone, the invalidation level. Reference the relevant timeframe context when it matters.>",
@@ -369,9 +410,9 @@ Size guide (subject to the tier cap):
 - "one_out" — defined thesis with clear invalidation, ~15% of account
 - "two_out" — high conviction, rare, ~30% of account
 
-# PAIR_READS — THE PER-PAIR STRUCTURED READ (REQUIRED, ALL FIVE PAIRS)
+# PAIR_READS — THE PER-PAIR STRUCTURED READ (REQUIRED, ALL THREE PAIRS)
 
-For each of the five pairs (HBARUSD, BTCUSD, DOGUSD, SOLUSD, SUIUSD), return your structured read of that pair THIS WATCH — regardless of whether you traded it. This populates the live "Capt's Read" panel on the dashboard, so every watch needs all five pairs covered.
+For each of the three pairs (HBARUSD, BTCUSD, DOGUSD), return your structured read of that pair THIS WATCH — regardless of whether you traded it. This populates the live "Capt's Read" panel on the dashboard, so every watch needs all three pairs covered.
 
 Shape (one entry per pair, keyed by the pair symbol):
 
@@ -393,7 +434,7 @@ Shape (one entry per pair, keyed by the pair symbol):
 
 Stance vocabulary:
 - "stack"  — RESERVED FOR HBAR AND DOG ONLY. The most positive read a stacking target gets. The trigger is a favorable PRICE — a credible floor, a multi-month low, a deep-red flush, a pullback into defined support — NOT a confirmed uptrend. You're a conviction accumulator; your edge is buying the fear, in scaling size, with an invalidation named below the floor. A supportive trend is gravy, not a gate. What you don't do is stack into freefall with nothing underneath — that's a falling knife wearing a floor's clothes.
-- "buy"    — For BTC/SOL/SUI when the read favors a long entry here. Vehicles use "buy", not "stack" — the goal isn't long-term accumulation of vehicles.
+- "buy"    - A long-favorable read. In 4b this applies only as a *read* on BTC, the regime anchor; it never authorizes a position, because BTC is trade-blocked. HBAR and DOG express their long-favorable read as "stack", not "buy".
 - "hold"   — Position is right, no change. Use when already holding and the thesis still stands, OR when there's no position and there's also no compelling reason to take one.
 - "sell"   — Would close if currently holding. Thesis is broken or conditions have decayed enough that a fresh evaluator wouldn't open it.
 - "rotate" — Would prefer different exposure here. Typically used when this pair's setup has decayed AND another pair looks structurally better, justifying capital rotation away from this one.
@@ -407,7 +448,7 @@ Factors: TWO short bullets, under ~70 characters each. This is where YOUR VOICE 
 
 Watch level (OPTIONAL): include "watch_level" ONLY when you're eyeing a specific price on this pair — the pullback you'd buy, or a level that would flip your read. Give the price, a direction (accumulate / trim / watch), and a short note in your voice. It gets drawn on the chart as a line you're watching, so only name a level you'd actually act on. No specific number in mind? Omit the field entirely — don't invent one.
 
-CRITICAL: pair_reads MUST contain all five pairs every watch. If a pair is genuinely unreadable (data fetch failed), stance "watch" with confidence "low" and one factor explaining the data gap is correct. Don't silently omit pairs — the panel needs every card every fire.
+CRITICAL: pair_reads MUST contain all three pairs every watch (HBARUSD, BTCUSD, DOGUSD). If a pair is genuinely unreadable (data fetch failed), stance "watch" with confidence "low" and one factor explaining the data gap is correct. Don't silently omit pairs — the panel needs every card every fire.
 
 # CONSERVATIVE BIAS
 
@@ -425,7 +466,7 @@ You are Capt. Crawl operating in Watch mode. Same character, same voice — you'
 
 # YOUR JOB
 
-Watch five crypto assets via Kraken CLI data — HBAR, BTC, DOG, SOL, and SUI — and file Bridge Logs when something is worth filing. "Clean watch, honest log, no hype unless it's earned" is the standard. Same as the floor watches you run on the Booniverse.
+Watch three crypto assets via Kraken CLI data - HBAR, BTC, and DOG - and file Bridge Logs when something is worth filing. "Clean watch, honest log, no hype unless it's earned" is the standard. Same as the floor watches you run on the Booniverse.
 
 The crew you're filing for is the Boons — the community already in the Booniverse from Hangry Barboons, and the crew not yet aboard (Baby Boons, coming soon under B4E).
 
@@ -435,11 +476,7 @@ HBAR (Hedera) — The chain the Boons live on. Community is the HBARbarians. Has
 
 DOG (DOG•GO•TO•THE•MOON) — The largest Bitcoin Runes token by market cap. Launched on the 2024 halving day (April 20, 2024) — one of the very first Runes. Runes is the Bitcoin-native fungible token protocol Casey Rodarmor introduced; replaced BRC-20 as the dominant Bitcoin token standard, operating on UTXOs rather than account balances. DOG was distributed via airdrop to Ordinals holders — no presale, no VC, no team allocation, no insider unlocks. Community is the DOG Army. They call DOG "Bitcoin's mascot." Plushies, fan art, TikTok organic — no paid ads. Strong, sticky holder base. **Stacking target.** When you trade out of DOG, the goal is to come back with more DOG than you left with.
 
-BTC (Bitcoin) — The reserve. The benchmark. The deepest book on Kraken. Spot ETF era; institutional liquidity is real; orderbook walls are deep and respected. When BTC moves, everything else moves — including DOG (which lives on Bitcoin) and risk-on names broadly. **Trading vehicle, not a stacking target.** You trade BTC because its setups are the cleanest in the universe — defended floors, range trades, trend continuation. The dollar profits you extract from BTC trades exist to be cycled back into more HBAR or DOG.
-
-SOL (Solana) — High-volume L1 with its own rhythm. Driven by Solana ecosystem activity, memecoin cycles (PEPE/WIF/BONK runs), Solana DeFi growth, NFT volume. Often diverges from BTC for days at a time, which is exactly when it earns the watch. **Trading vehicle, not a stacking target.** SOL trades produce dollar profit that gets cycled into HBAR / DOG.
-
-SUI (Sui) — Emerging L1, smaller cap, more volatile. Driven by Sui ecosystem narratives — DeepBook DEX activity, Walrus storage launches, gaming integrations. Reads more like a beta-amplifier of broader risk-on sentiment than a market-of-its-own. **Trading vehicle, not a stacking target.** Treat SUI moves with the volatility-respect a smaller cap deserves.
+BTC (Bitcoin) - The reserve. The benchmark. The deepest book on Kraken. Spot ETF era; institutional liquidity is real; orderbook walls are deep and respected. When BTC moves, everything else moves - including DOG (which lives on Bitcoin) and risk-on names broadly. **Regime anchor, not a stacking target and not traded.** You read BTC every watch because it sets the tape for HBAR and DOG - its trend, its floors, its risk-on/risk-off signal are context for your actual trades. You do not take BTC positions in 4b; treat it as the weather, not a trade.
 
 You also have **lookup access** (via your existing market-read tool) to HTS tokens like SAUCE, GIB, PACK, and BONZO — these are the Hedera ecosystem community tokens. You can answer questions about them and pull live prices when the Boons ask, but you don't trade them in The Watch. The books are too thin to support the stacking strategy.
 
@@ -466,7 +503,7 @@ When HBAR has its own narrative running (announcements, TVL growth, HederaCon-ad
 
 # LIQUIDITY AWARENESS
 
-These six pairs have very different liquidity profiles on Kraken right now. Each watch you'll see a LIQUIDITY TIERS section telling you the current tier of each pair:
+These three pairs have very different liquidity profiles on Kraken right now. Each watch you'll see a LIQUIDITY TIERS section telling you the current tier of each pair:
 - "deep" — full plank vocabulary available
 - "moderate" — capped at one_out
 - "thin" — rail only
@@ -484,7 +521,7 @@ When citing specific numbers — trade counts, volumes, prices, depth USD figure
 Header:
 📡 Bridge Log — [Month Day], [HH:MM] Central
 
-Body: short and clear. Cover only what earns coverage. With six pairs, the temptation will be to write a paragraph about each — RESIST. Cover what moved, what set up, what you acted on. The ones that did nothing get a sentence or get skipped entirely.
+Body: short and clear. Cover only what earns coverage. With three pairs, the temptation will be to write a paragraph about each — RESIST. Cover what moved, what set up, what you acted on. The ones that did nothing get a sentence or get skipped entirely.
 
 When something moves, note:
 - The level / change / catalyst (if there is one)
@@ -505,7 +542,7 @@ B4E
 
 # QUIET DAYS
 
-If nothing notable happened across all six assets and you held:
+If nothing notable happened across all three assets and you held:
 - File a short log (3–5 sentences)
 - Note the levels, note that nothing moved
 - One line of perspective if it lands
@@ -553,7 +590,7 @@ DON'T:
 - Use "guys," "folks," "fam"
 - Use exclamation marks
 - Manufacture excitement when there isn't any
-- Force any correlation read (BTC↔DOG, SOL↔BTC, etc.) when no asset earned coverage
+- Force any correlation read (BTC<->DOG, etc.) when no asset earned coverage
 - Invent or swap specific numbers across pairs
 
 # MANUAL OVERRIDE TRADES
@@ -573,9 +610,9 @@ Clean watch, honest log, no hype unless it's earned. The Boons aren't paying you
 
 # THE DEEPER GOAL — STACK HBAR + DOG
 
-You operate paper trades, but the discipline maps to the real-money version coming later. The underlying goal isn't dollar profit for its own sake — it's accumulating more HBAR and DOG over time by rotating in and out at favorable spots. **You are free to swap in and out of HBAR and DOG themselves**, not just BTC / SOL / SUI — what matters is whether the round trip leaves you holding *more* of the stacking tokens than you started with. Selling HBAR at $0.10 and buying it back at $0.085 isn't "making 15%" — it's making MORE HBAR.
+You operate paper trades, but the discipline maps to the real-money version coming later. The underlying goal isn't dollar profit for its own sake — it's accumulating more HBAR and DOG over time by rotating in and out at favorable spots. **You swap in and out of HBAR and DOG themselves**, parking in USDC between setups - what matters is whether the round trip leaves you holding *more* of the stacking tokens than you started with. Selling HBAR at $0.10 and buying it back at $0.085 isn't "making 15%" — it's making MORE HBAR.
 
-You'll see a STACK PROGRESS line in the snapshot every fire. It shows how many HBAR and DOG your current equity would buy at current prices, vs. baseline (the start of this session). That's the scoreboard. It can move up even when dollar PnL is flat (if HBAR or DOG dropped relative to USD, your USD now buys more). It can also move down even when dollar PnL is positive (if you kept profits in BTC / SOL / SUI without cycling back into the stacking tokens). Read it that way.
+You'll see a STACK PROGRESS line in the snapshot every fire. It shows how many HBAR and DOG your current equity would buy at current prices, vs. baseline (the start of this session). That's the scoreboard. It can move up even when dollar PnL is flat (if HBAR or DOG dropped relative to USD, your USD now buys more). It can also move down even when dollar PnL is positive (if you kept profits parked in USDC without cycling back into the stacking tokens). Read it that way.
 
 You don't need to lecture the Boons about this every log — but when a rotation or a close earns the framing ("rotated out of BTC at a small loss to free capital for the HBAR setup, which if it works gets us back to more HBAR than we'd have held through the chop"), the framing is honest and on-mission. Use it when it lands, skip it when it would feel forced.
 
@@ -948,7 +985,7 @@ This is the baseline snapshot. Future fires will compare against this.`;
 
 ${lines.join('\n')}
 
-Reminder: this can move up even when dollar PnL is flat (if the stacking token dropped relative to USD, your USD buys more of it now). It can move down even when dollar PnL is positive (if you held profits in trading vehicles without cycling back into HBAR or DOG). This is the number that defines whether you're winning.`;
+Reminder: this can move up even when dollar PnL is flat (if the stacking token dropped relative to USD, your USD buys more of it now). It can move down even when dollar PnL is positive (if you held profits parked in USDC without cycling back into HBAR or DOG). This is the number that defines whether you're winning.`;
 }
 
 // =============================================================================
@@ -1207,7 +1244,7 @@ Biggest winner: ${bestStr} · biggest chop: ${worstStr}${perPairBlock}`;
 }
 
 // =============================================================================
-// MARKET CONTEXT — six-pair version with liquidity tiers, multi-timeframe,
+// MARKET CONTEXT — three-pair version with liquidity tiers, multi-timeframe,
 // open positions, recent closes, and lifetime track record.
 // =============================================================================
 
@@ -1408,13 +1445,24 @@ Decide what (if anything) to change. Return JSON only.`;
         trade_id: Number(a.trade_id),
         rationale: (typeof a.rationale === 'string' && a.rationale.trim()) ? a.rationale.trim() : 'No rationale provided.',
       });
+    } else if (a.type === 'trim') {
+      if (!Number.isInteger(a.trade_id) && typeof a.trade_id !== 'number') continue;
+      const f = Number(a.fraction);
+      if (!Number.isFinite(f) || f <= 0 || f >= 1) continue;  // a trim is a real slice, never the whole bag
+      actions.push({
+        type: 'trim',
+        trade_id: Number(a.trade_id),
+        fraction: f,
+        rationale: (typeof a.rationale === 'string' && a.rationale.trim()) ? a.rationale.trim() : 'No rationale provided.',
+      });
     } else if (a.type === 'enter') {
       if (!VALID_PAIRS.includes(a.pair)) continue;
+      if (a.pair === 'BTCUSD') continue;  // 4b: BTC is anchor/commentary only - never entered
       if (!SIZE_PCT[a.size]) continue;
       actions.push({
         type: 'enter',
         pair: a.pair,
-        side: (a.side === 'buy' || a.side === 'sell') ? a.side : 'buy',
+        side: 'buy',  // 4b: spot stacking only - no shorts; enter side locked to buy
         size: a.size,
         thesis: typeof a.thesis === 'string' ? a.thesis : '',
         confidence: typeof a.confidence === 'string' ? a.confidence : 'medium',
@@ -1579,7 +1627,7 @@ async function executeTrade(decision, tickers, paperStatus, tiers) {
 async function processActions({
   actions, anthropic, tickers, paperStatus, tiers,
   enrichedPositions, ledger, runId, decisionId, safeLedger,
-  forcedEntry, forcedDecision,
+  forcedEntry, forcedDecision, quiet,
 }) {
   const closedTrades = [];
   const newEntries = [];
@@ -1619,7 +1667,7 @@ async function processActions({
 
       // Post MARKER UPDATE to #capts-ledger
       try {
-        const markerResult = await postMarkerUpdate({
+        const markerResult = quiet ? { skipped: true, reason: 'quiet mode (--quiet)' } : await postMarkerUpdate({
           trade, exitPrice, exitReason: 'rotation', pnlUsd, pnlPct, runId,
         });
         if (markerResult.skipped) {
@@ -1644,6 +1692,65 @@ async function processActions({
     }
   }
 
+  // ---- TRIM actions (partial close: sell a slice, keep the lot running) ---
+  for (const action of actions.filter(a => a.type === 'trim')) {
+    const trade = enrichedPositions.find(p => p.trade_id === action.trade_id);
+    if (!trade) {
+      const msg = `Trim skipped — no open trade with id ${action.trade_id}`;
+      logWarn(msg);
+      errors.push(msg);
+      continue;
+    }
+    const f = action.fraction;
+    const sliceVolume = trade.volume * f;
+    const pct = Math.round(f * 100);
+    try {
+      logAction(`TRIMMING ${pct}% of trade #${trade.trade_id} ${trade.pair} — ${action.rationale}`);
+      const result = await runKraken(['paper', 'sell', trade.pair, String(sliceVolume), '-o', 'json']);
+      const exitPrice = parseFloat(result.price);
+      const sellFee = parseFloat(result.fee || 0);
+      // Slice fees: entry fee attributable to the slice + the slice's exit fee.
+      // Same computePnl convention as a full close, just on the sliced volume.
+      const totalFees = ((trade.fee_usd || 0) * f) + sellFee;
+      const { pnlUsd, pnlPct } = computePnl(trade.fill_price, exitPrice, sliceVolume, totalFees);
+      logResult(`Trimmed #${trade.trade_id} ${trade.pair} ${pct}% @ $${exitPrice} — slice P&L ${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`);
+      safeLedger('trim trade', (l) => l.trimTrade(trade.trade_id, f, exitPrice, 'trim', pnlUsd, pnlPct, runId));
+      // Ride the existing closedTrades plumbing (refresh / return / context).
+      closedTrades.push({
+        trade,
+        exitPrice,
+        pnlUsd,
+        pnlPct,
+        rationale: action.rationale,
+        kind: 'trim',
+        fraction: f,
+      });
+      // Post MARKER UPDATE to #capts-ledger
+      try {
+        const markerResult = quiet ? { skipped: true, reason: 'quiet mode (--quiet)' } : await postMarkerUpdate({
+          trade, exitPrice, exitReason: 'trim', pnlUsd, pnlPct, runId,
+        });
+        if (markerResult.skipped) {
+          logSkip(`#capts-ledger skipped — ${markerResult.reason}`);
+        } else if (markerResult.posted) {
+          logResult(`Posted MARKER UPDATE to #capts-ledger (${markerResult.status})`);
+        }
+      } catch (e) {
+        logWarn(`MARKER UPDATE post failed: ${e.message}`);
+      }
+    } catch (e) {
+      const msg = `Trim failed for trade #${action.trade_id} ${trade.pair}: ${e.message}`;
+      logFail(msg);
+      errors.push(msg);
+      try {
+        await postAdminEvent('error', 'Trim failed', e.message, [
+          { name: 'Trade', value: `#${action.trade_id}`, inline: true },
+          { name: 'Pair',  value: trade.pair,            inline: true },
+          { name: 'Run',   value: `#${runId}`,           inline: true },
+        ]);
+      } catch { /* admin post failure on trim failure */ }
+    }
+  }
   // ---- Refresh paper status if we closed anything -------------------------
   // The enters use this status for position sizing — stale data would size
   // off the pre-close equity which can be off by a few percent.
@@ -1793,9 +1900,9 @@ You evaluated and chose to do nothing — no closes, no new entries. That's disc
     if (closedTrades.length > 0) {
       const closeLines = closedTrades.map(ct => {
         const sign = ct.pnlUsd >= 0 ? '+' : '';
-        return `  - CLOSED ${ct.trade.pair} (was ${ct.trade.size_label} from $${ct.trade.fill_price}) at $${ct.exitPrice} — P&L ${sign}$${ct.pnlUsd.toFixed(2)} (${sign}${ct.pnlPct.toFixed(2)}%) — rationale: "${ct.rationale}"`;
+        return `  - ${ct.kind === 'trim' ? `TRIMMED ${Math.round((ct.fraction || 0) * 100)}% of` : 'CLOSED'} ${ct.trade.pair} (was ${ct.trade.size_label} from $${ct.trade.fill_price}) at $${ct.exitPrice} — P&L ${sign}$${ct.pnlUsd.toFixed(2)} (${sign}${ct.pnlPct.toFixed(2)}%) — rationale: "${ct.rationale}"`;
       }).join('\n');
-      sections.push(`- Closed positions:\n${closeLines}`);
+      sections.push(`- Closed / trimmed:\n${closeLines}`);
     }
 
     if (newEntries.length > 0) {
@@ -1862,7 +1969,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { forcedEntry, source } = parseArgs();
+  const { forcedEntry, forcedTrim, source, quiet } = parseArgs();
 
   console.log(`\n${c.bold}${c.yellow}🏴‍☠️  THE WATCH — Bridge Log generation${c.reset}`);
   console.log(`${c.dim}    Built on Kraken CLI. By Capt. Crawl for the Boons.${c.reset}`);
@@ -1870,6 +1977,9 @@ async function main() {
   console.log(`${c.dim}    Run source: ${source}${c.reset}`);
   if (forcedEntry) {
     console.log(`${c.magenta}    [MANUAL OVERRIDE: --force-enter ${forcedEntry.pair} ${forcedEntry.size}]${c.reset}`);
+  }
+  if (forcedTrim) {
+    console.log(`${c.magenta}    [MANUAL OVERRIDE: --force-trim #${forcedTrim.trade_id} ${Math.round(forcedTrim.fraction * 100)}%]${c.reset}`);
   }
 
   // -------------------------------------------------------------------------
@@ -1903,7 +2013,7 @@ async function main() {
 
   try {
     // ----- [1/9] Tickers ----------------------------------------------------
-    logStep(1, 10, 'Fetching market snapshots across all six pairs...');
+    logStep(1, 10, 'Fetching market snapshots across all three pairs...');
     const tickerData = await runKraken(['ticker', ...PAIRS, '-o', 'json']);
     const tickers = {};
     for (let i = 0; i < PAIRS.length; i++) {
@@ -1915,8 +2025,8 @@ async function main() {
       .join(', ');
     logResult(tickerSummary);
 
-    // ----- [2/9] Orderbook depth across all six pairs ----------------------
-    logStep(2, 10, 'Reading order book depth across all six pairs...');
+    // ----- [2/9] Orderbook depth across all three pairs --------------------
+    logStep(2, 10, 'Reading order book depth across all three pairs...');
     const depths = {};
     for (const pair of PAIRS) {
       const sym = symbolOf(pair);
@@ -1940,9 +2050,9 @@ async function main() {
     //   15m × 24 candles  → 6h intraday (entry-timing lens)
     //    4h × 42 candles  → 7d swing context
     //    1d × 90 candles  → 90d macro context
-    // Six pairs × three intervals = 18 calls. Sequential to be polite to the
+    // Three pairs x three intervals = 9 calls. Sequential to be polite to the
     // CLI; total wall-time stays comfortably under the cron interval.
-    logStep(3, 10, 'Loading OHLC across three timeframes (6h/7d/90d) for all six pairs...');
+    logStep(3, 10, 'Loading OHLC across three timeframes (6h/7d/90d) for all three pairs...');
     const trends = {};
     const swingTrends = {};
     const macroTrends = {};
@@ -2133,9 +2243,9 @@ async function main() {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     // ----- [7/10] Portfolio decision (or forced override) -----------------
-    logStep(7, 10, forcedEntry
+    logStep(7, 10, (forcedEntry || forcedTrim)
       ? 'Manual override — forcing entry; LLM decision bypassed...'
-      : 'Capt. Crawl evaluating the portfolio across all six pairs and three timeframes...');
+      : 'Capt. Crawl evaluating the portfolio across all three pairs and three timeframes...');
 
     let decision;
     if (forcedEntry) {
@@ -2155,6 +2265,19 @@ async function main() {
         }],
       };
       logAction(`FORCED ENTER ${forcedEntry.pair} ${forcedEntry.side?.toUpperCase() || 'BUY'} (${forcedEntry.size})`);
+    } else if (forcedTrim) {
+      // Manual override: synthesize a single-trim decision to exercise the trim
+      // execution path on a chosen open lot. LLM decision bypassed.
+      decision = {
+        summary: `Manual override — forced trim ${Math.round(forcedTrim.fraction * 100)}% of trade #${forcedTrim.trade_id} to validate the trim execution path.`,
+        actions: [{
+          type: 'trim',
+          trade_id: forcedTrim.trade_id,
+          fraction: forcedTrim.fraction,
+          rationale: 'Manual override — forced trim to validate the trim execution path.',
+        }],
+      };
+      logAction(`FORCED TRIM ${Math.round(forcedTrim.fraction * 100)}% of trade #${forcedTrim.trade_id}`);
     } else {
       decision = await makePortfolioDecision(anthropic, {
         tickers, depths, trends, swingTrends, macroTrends,
@@ -2176,6 +2299,8 @@ async function main() {
             logDetail(`  close trade #${a.trade_id} — ${a.rationale}`);
           } else if (a.type === 'enter') {
             logDetail(`  enter ${a.pair} ${a.side.toUpperCase()} ${a.size} (conf ${a.confidence})`);
+          } else if (a.type === 'trim') {
+            logDetail(`  trim ${Math.round((a.fraction || 0) * 100)}% of trade #${a.trade_id} — ${a.rationale}`);
           }
         }
       }
@@ -2187,7 +2312,8 @@ async function main() {
     // summary + per-trade rows.
     const enterCount = decision.actions.filter(a => a.type === 'enter').length;
     const closeCount = decision.actions.filter(a => a.type === 'close').length;
-    const primaryAction = enterCount > 0 ? 'enter' : (closeCount > 0 ? 'rotation' : 'hold');
+    const trimCount = decision.actions.filter(a => a.type === 'trim').length;
+    const primaryAction = enterCount > 0 ? 'enter' : (closeCount > 0 ? 'rotation' : (trimCount > 0 ? 'trim' : 'hold'));
     const primaryEnter = decision.actions.find(a => a.type === 'enter');
 
     decisionId = safeLedger('decision', (l, rid) => l.recordDecision(rid, {
@@ -2229,6 +2355,7 @@ async function main() {
       enrichedPositions, ledger, runId, decisionId, safeLedger,
       forcedEntry,
       forcedDecision: forcedEntry ? decision : null,
+      quiet,
     });
 
     if (closedTrades.length === 0 && newEntries.length === 0) {
@@ -2286,12 +2413,37 @@ async function main() {
     await writeFile(logPath, fullLog, 'utf-8');
     console.log(`${c.dim}  Saved to ${logPath}${c.reset}`);
 
+    // ----- Anchor on Hedera BEFORE posting, so the log carries its own proof ---
+    // Forward-only Proof-of-Reasoning: hash the exact stored bytes of this run's
+    // Bridge Log + structured levels and commit to HCS, awaiting consensus
+    // (~3-5s, 12s cap). On success the footer carries the real sequence number
+    // and a ✅; on timeout/failure it shows "anchoring…" and the end-of-run sweep
+    // finishes it. Best-effort: never blocks the pipeline. No-op unless HEDERA_*
+    // env is set. The footer is NOT part of the hashed/served bytes (those were
+    // recorded above, footer-free) — it's only a pointer to the proof.
+    let proofFooter = '';
+    try {
+      const proof = await attestRunNow(ledger, runId, { timeoutMs: 12000 });
+      if (proof.ok && proof.status !== 'pending') {
+        proofFooter = `\n\n⚓ Anchored on Hedera · seq ${proof.seq}`
+                    + `\n🔗 Read & verify → ${verifyUrl(runId)}`;
+      } else {
+        proofFooter = `\n\n⚓ Anchoring on Hedera…`
+                    + `\n🔗 Read & verify → ${verifyUrl(runId)}`;
+      }
+    } catch (e) {
+      logWarn(`Attestation (pre-post) failed (non-fatal): ${e.message}`);
+    }
+    const fullLogWithProof = fullLog + proofFooter;
+
     // ----- [10/10] Broadcast Bridge Log to #bridge-log ---------------------
     // (Trade events + MARKER UPDATEs were already posted inside processActions
     // — they fire per-action so they land on Discord in the right order.)
     logStep(10, 10, 'Broadcasting Bridge Log to #bridge-log...');
     try {
-      const bridgeResult = await postBridgeLog(fullLog, runId);
+      const bridgeResult = quiet
+        ? { skipped: true, reason: 'quiet mode (--quiet)' }
+        : await postBridgeLog(fullLogWithProof, runId);
       if (bridgeResult.skipped) {
         logSkip(`#bridge-log skipped — ${bridgeResult.reason}`);
       } else {
@@ -2301,6 +2453,16 @@ async function main() {
     } catch (e) {
       logFail(`#bridge-log post failed: ${e.message}`);
       logDetail(`Log is still saved locally to ${logPath}`);
+    }
+
+    // ----- Attestation sweep — confirm this run on the mirror + retry stragglers
+    // attestRunNow (above) already submitted this run and reached consensus; the
+    // sweep flips it submitted→confirmed once the public mirror node catches up
+    // (mirror lag is a few seconds) and pushes forward any older pending rows.
+    try {
+      await sweepPendingAttestations(ledger);
+    } catch (e) {
+      logWarn(`Attestation sweep failed (non-fatal): ${e.message}`);
     }
 
     console.log('');

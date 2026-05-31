@@ -222,6 +222,29 @@ CREATE TABLE IF NOT EXISTS onchain_snapshots (
   FOREIGN KEY (run_id) REFERENCES runs(run_id)
 );
 CREATE INDEX IF NOT EXISTS idx_onchain_snapshots_ts ON onchain_snapshots(ts_utc);
+
+-- Proof-of-Reasoning attestations. One row per run (forward-only). Stores the
+-- EXACT canonical bytes that were hashed (payload) so a verifier re-hashes
+-- byte-identical input, the sha256, and the Hedera HCS coordinates once committed.
+CREATE TABLE IF NOT EXISTS attestations (
+  attestation_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id           INTEGER NOT NULL UNIQUE,
+  kind             TEXT    NOT NULL DEFAULT 'bridge_log_v1',
+  payload          TEXT    NOT NULL,
+  sha256           TEXT    NOT NULL,
+  topic_id         TEXT,
+  sequence_number  INTEGER,
+  consensus_ts     TEXT,
+  tx_id            TEXT,
+  status           TEXT    NOT NULL DEFAULT 'pending',  -- 'pending' | 'submitted' | 'confirmed' | 'failed'
+  attempts         INTEGER NOT NULL DEFAULT 0,
+  last_error       TEXT,
+  created_ts_utc   TEXT    NOT NULL,
+  updated_ts_utc   TEXT,
+  FOREIGN KEY (run_id) REFERENCES runs(run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_attestations_status ON attestations(status);
+CREATE INDEX IF NOT EXISTS idx_attestations_run ON attestations(run_id);
 `;
 
 // =============================================================================
@@ -277,6 +300,7 @@ export default class Ledger {
       ['invalidation_price', 'ALTER TABLE trades ADD COLUMN invalidation_price REAL'],
       ['take_profit_price',  'ALTER TABLE trades ADD COLUMN take_profit_price REAL'],
       ['time_stop_hours',    'ALTER TABLE trades ADD COLUMN time_stop_hours INTEGER NOT NULL DEFAULT 48'],
+      ['parent_trade_id',    'ALTER TABLE trades ADD COLUMN parent_trade_id INTEGER'],
     ];
     for (const [colName, sql] of migrations) {
       if (!tradeCols.has(colName)) {
@@ -342,6 +366,20 @@ export default class Ledger {
             pnl_usd = ?,
             pnl_pct = ?
         WHERE trade_id = ?
+      `),
+
+      // ---- trim (partial close) ----
+      getTradeById: this.db.prepare(`SELECT * FROM trades WHERE trade_id = ?`),
+      insertTrimSlice: this.db.prepare(`
+        INSERT INTO trades
+          (run_id, decision_id, ts_utc, pair, side, size_label, volume,
+           fill_price, cost_usd, fee_usd, tier_at_entry, status, forced,
+           exit_price, exit_ts_utc, exit_reason, pnl_usd, pnl_pct,
+           invalidation_price, take_profit_price, time_stop_hours, parent_trade_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      shrinkTrade: this.db.prepare(`
+        UPDATE trades SET volume = ?, cost_usd = ?, fee_usd = ? WHERE trade_id = ?
       `),
 
       // ---- equity snapshots ----
@@ -410,6 +448,27 @@ export default class Ledger {
       `),
       getOpenTradesByPair: this.db.prepare(`
         SELECT * FROM trades WHERE status = 'open' AND pair = ? ORDER BY ts_utc ASC
+      `),
+      // armed entry levels still being watched (consumed by watch-monitor.js)
+      getWatchingTheses: this.db.prepare(`
+        SELECT * FROM theses WHERE state = 'watching' ORDER BY thesis_id ASC
+      `),
+      // retire a watched level once the monitor fills/acts on it
+      resolveThesis: this.db.prepare(`
+        UPDATE theses SET state = 'resolved', trade_id = ?, resolved_run_id = ?, updated_ts_utc = ?
+        WHERE thesis_id = ?
+      `),
+      // Reckoning v2 -- record that price tagged an armed zone, decoupled from
+      // any fill. Idempotent: only stamps if not already reached.
+      markThesisReached: this.db.prepare(`
+        UPDATE theses SET reached_run_id = ?, updated_ts_utc = ?
+        WHERE thesis_id = ? AND reached_run_id IS NULL
+      `),
+      // Reckoning v2 -- flip stale, unreached watched levels to 'expired' so an
+      // unfilled wait that never came true gets a terminal verdict.
+      expireStaleTheses: this.db.prepare(`
+        UPDATE theses SET state = 'expired', updated_ts_utc = ?
+        WHERE state = 'watching' AND reached_run_id IS NULL AND ts_utc < ?
       `),
       getEquityCurve: this.db.prepare(`
         SELECT ts_utc, account_value_usd, unrealized_pnl_pct
@@ -590,6 +649,50 @@ export default class Ledger {
           AND dog_holders IS NOT NULL
           AND ts_utc >= datetime('now', '-7 days')
       `),
+
+      // ---- attestations (Proof-of-Reasoning on Hedera) ----
+      insertAttestation: this.db.prepare(`
+        INSERT INTO attestations
+          (run_id, kind, payload, sha256, status, attempts, created_ts_utc, updated_ts_utc)
+        VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)
+      `),
+      getAttestationByRun: this.db.prepare(`
+        SELECT * FROM attestations WHERE run_id = ?
+      `),
+      markAttestationSubmitted: this.db.prepare(`
+        UPDATE attestations
+        SET status = 'submitted', topic_id = ?, sequence_number = ?, tx_id = ?,
+            attempts = attempts + 1, last_error = NULL, updated_ts_utc = ?
+        WHERE run_id = ?
+      `),
+      markAttestationConfirmed: this.db.prepare(`
+        UPDATE attestations
+        SET status = 'confirmed', consensus_ts = ?, updated_ts_utc = ?
+        WHERE run_id = ?
+      `),
+      markAttestationError: this.db.prepare(`
+        UPDATE attestations
+        SET attempts = attempts + 1, last_error = ?, updated_ts_utc = ?
+        WHERE run_id = ?
+      `),
+      getRetryableAttestations: this.db.prepare(`
+        SELECT * FROM attestations
+        WHERE status IN ('pending','submitted')
+        ORDER BY attestation_id ASC
+        LIMIT ?
+      `),
+      // per-run read-back for the canonical payload
+      getRunRow: this.db.prepare(`SELECT * FROM runs WHERE run_id = ?`),
+      getBridgeLogByRun: this.db.prepare(`SELECT * FROM bridge_logs WHERE run_id = ?`),
+      getDecisionByRun: this.db.prepare(`
+        SELECT * FROM decisions WHERE run_id = ? ORDER BY decision_id DESC LIMIT 1
+      `),
+      getTradesByRun: this.db.prepare(`
+        SELECT * FROM trades WHERE run_id = ? ORDER BY trade_id ASC
+      `),
+      getThesesByRun: this.db.prepare(`
+        SELECT * FROM theses WHERE run_id = ? ORDER BY thesis_id ASC
+      `),
     };
   }
 
@@ -651,6 +754,43 @@ export default class Ledger {
 
   closeTrade(tradeId, exitPrice, exitReason, pnlUsd, pnlPct) {
     this.stmts.closeTrade.run(exitPrice, nowUtc(), exitReason, pnlUsd, pnlPct, tradeId);
+  }
+
+  // Partial close: realize a SLICE of an open lot and keep the rest running.
+  // Inserts a new status='closed' row for the trimmed slice (so it scores as a
+  // real closed trade and preserves the entry ts for held-duration) and shrinks
+  // the parent lot's volume/cost/fee in place, both in one transaction.
+  // pnlUsd/pnlPct are computed by the caller on the SLICE using the same
+  // computePnl convention as a full close — mirrors closeTrade's contract.
+  trimTrade(tradeId, fraction, exitPrice, exitReason, pnlUsd, pnlPct, runId, decisionId = null) {
+    const f = Number(fraction);
+    if (!Number.isFinite(f) || f <= 0 || f >= 1) {
+      throw new Error(`trimTrade: fraction must be in (0,1), got ${fraction}`);
+    }
+    const parent = this.stmts.getTradeById.get(tradeId);
+    if (!parent) throw new Error(`trimTrade: no trade #${tradeId}`);
+    if (parent.status !== 'open') {
+      throw new Error(`trimTrade: trade #${tradeId} is not open (status=${parent.status})`);
+    }
+    const sliceVolume = parent.volume   * f;
+    const sliceCost   = parent.cost_usd * f;
+    const sliceFee    = (parent.fee_usd || 0) * f;
+    const remVolume   = parent.volume   - sliceVolume;
+    const remCost     = parent.cost_usd - sliceCost;
+    const remFee      = (parent.fee_usd || 0) - sliceFee;
+    const apply = this.db.transaction(() => {
+      this.stmts.insertTrimSlice.run(
+        runId, decisionId, parent.ts_utc, parent.pair, parent.side,
+        parent.size_label, sliceVolume, parent.fill_price, sliceCost, sliceFee,
+        parent.tier_at_entry ?? null, parent.forced ?? 0,
+        exitPrice, nowUtc(), exitReason, pnlUsd, pnlPct,
+        parent.invalidation_price ?? null, parent.take_profit_price ?? null,
+        parent.time_stop_hours ?? 48, tradeId,
+      );
+      this.stmts.shrinkTrade.run(remVolume, remCost, remFee, tradeId);
+    });
+    apply();
+    return { sliceVolume, remVolume };
   }
 
   recordEquitySnapshot(runId, paperStatus, allocations = null) {
@@ -769,6 +909,84 @@ export default class Ledger {
   }
 
   // ==========================================================================
+  // PUBLIC API — ATTESTATIONS (Proof-of-Reasoning anchoring on Hedera)
+  // ==========================================================================
+
+  // Assemble the canonical "read" for a run: the Bridge Log text PLUS the
+  // structured levels the scorecard runs on (decision + trades + watched
+  // theses). Returns null when the run has no Bridge Log yet (nothing to
+  // anchor). The exact JSON bytes built from this are what get hashed + stored.
+  getRunForAttestation(runId) {
+    const bridge = this.stmts.getBridgeLogByRun.get(runId);
+    if (!bridge || !bridge.log_text) return null;
+    const run      = this.stmts.getRunRow.get(runId);
+    const decision = this.stmts.getDecisionByRun.get(runId) || null;
+    const trades   = this.stmts.getTradesByRun.all(runId) || [];
+    const theses   = this.stmts.getThesesByRun.all(runId) || [];
+
+    return {
+      v: 1,
+      kind: 'bridge_log_v1',
+      run_id: runId,
+      ts_utc: bridge.ts_utc || (run ? run.ts_utc : null),
+      bridge_log: bridge.log_text,
+      decision: decision ? {
+        action:     decision.action,
+        pair:       decision.pair,
+        side:       decision.side,
+        size_label: decision.size_label,
+        size_pct:   decision.size_pct,
+        thesis:     decision.thesis,
+        confidence: decision.confidence,
+        forced:     decision.forced,
+      } : null,
+      trades: trades.map(t => ({
+        pair:               t.pair,
+        side:               t.side,
+        size_label:         t.size_label,
+        volume:             t.volume,
+        fill_price:         t.fill_price,
+        invalidation_price: t.invalidation_price,
+        take_profit_price:  t.take_profit_price,
+        time_stop_hours:    t.time_stop_hours,
+      })),
+      theses: theses.map(th => ({
+        pair:       th.pair,
+        kind:       th.kind,
+        direction:  th.direction,
+        level_low:  th.level_low,
+        level_high: th.level_high,
+        note:       th.note,
+      })),
+    };
+  }
+
+  insertAttestation(runId, kind, payload, sha256) {
+    const ts = nowUtc();
+    this.stmts.insertAttestation.run(runId, kind, payload, sha256, ts, ts);
+  }
+
+  getAttestationByRun(runId) {
+    return this.stmts.getAttestationByRun.get(runId) || null;
+  }
+
+  markAttestationSubmitted(runId, topicId, sequenceNumber, txId) {
+    this.stmts.markAttestationSubmitted.run(topicId, sequenceNumber, txId || null, nowUtc(), runId);
+  }
+
+  markAttestationConfirmed(runId, consensusTs) {
+    this.stmts.markAttestationConfirmed.run(consensusTs, nowUtc(), runId);
+  }
+
+  markAttestationError(runId, errMsg) {
+    this.stmts.markAttestationError.run(String(errMsg).slice(0, 500), nowUtc(), runId);
+  }
+
+  getRetryableAttestations(limit = 10) {
+    return this.stmts.getRetryableAttestations.all(limit);
+  }
+
+  // ==========================================================================
   // PUBLIC API — READS (used by dashboard, admin commands, future analytics)
   // ==========================================================================
 
@@ -785,6 +1003,30 @@ export default class Ledger {
 
   getOpenTradesByPair(pair) {
     return this.stmts.getOpenTradesByPair.all(pair);
+  }
+
+  // Every thesis still armed (state='watching') — the levels the watcher polls.
+  getWatchingTheses() {
+    return this.stmts.getWatchingTheses.all();
+  }
+
+  // Retire a watched level after the monitor acts on it (stops re-firing).
+  resolveThesis(thesisId, tradeId, runId) {
+    this.stmts.resolveThesis.run(tradeId || null, runId || null, nowUtc(), thesisId);
+  }
+
+  // Reckoning v2 -- stamp the run at which price first tagged this thesis's zone.
+  // Idempotent (no-op if already reached). Returns true if it stamped this call.
+  markThesisReached(thesisId, runId) {
+    const info = this.stmts.markThesisReached.run(runId || null, nowUtc(), thesisId);
+    return info.changes > 0;
+  }
+
+  // Reckoning v2 -- expire watched levels older than cutoffIso that were never
+  // reached (the predicted move never came). Returns how many were expired.
+  expireStaleTheses(cutoffIso) {
+    const info = this.stmts.expireStaleTheses.run(nowUtc(), cutoffIso);
+    return info.changes;
   }
 
   getEquityCurve(limit = 500) {

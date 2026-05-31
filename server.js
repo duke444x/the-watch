@@ -21,8 +21,13 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
 import Database from 'better-sqlite3';
+import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load .env so HEDERA_* are visible to the attestation/verify endpoints.
+// Explicit path => resolves regardless of the process's working directory.
+dotenv.config({ path: path.join(__dirname, '.env'), quiet: true });
 
 // =============================================================================
 // CONFIG
@@ -32,6 +37,8 @@ const PORT        = parseInt(process.env.DASHBOARD_PORT || '4444', 10);
 const LEDGER_DB   = path.join(__dirname, 'data', 'ledger.db');
 const PAUSE_FLAG  = path.join(__dirname, 'data', 'PAUSED.flag');
 const PUBLIC_DIR  = path.join(__dirname, 'public');
+const HEDERA_NETWORK  = (process.env.HEDERA_NETWORK || 'mainnet').toLowerCase();
+const HEDERA_TOPIC_ID = process.env.HEDERA_TOPIC_ID || null;
 
 const PAIRS_ALL = ['HBARUSD', 'BTCUSD', 'DOGUSD', 'SOLUSD', 'SUIUSD'];
 
@@ -186,6 +193,74 @@ function getRecentDecisions(limit) {
   `).all(limit);
 }
 
+// --- attestations (Proof-of-Reasoning anchoring on Hedera) ---
+
+function getRecentAttestations(limit) {
+  const conn = getDb();
+  if (!conn) return [];
+  try {
+    return conn.prepare(`
+      SELECT run_id, kind, sha256, topic_id, sequence_number, consensus_ts, status
+      FROM attestations
+      ORDER BY run_id DESC
+      LIMIT ?
+    `).all(limit);
+  } catch {
+    return [];
+  }
+}
+
+function getAttestationByRun(runId) {
+  const conn = getDb();
+  if (!conn) return null;
+  try {
+    return conn.prepare(`
+      SELECT run_id, kind, payload, sha256, topic_id, sequence_number, consensus_ts, status
+      FROM attestations WHERE run_id = ?
+    `).get(runId) || null;
+  } catch {
+    return null;
+  }
+}
+
+function getAttestationSummary() {
+  const conn = getDb();
+  if (!conn) return { available: false };
+  let exists;
+  try {
+    exists = conn.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='attestations'"
+    ).get();
+  } catch { exists = null; }
+  if (!exists) return { available: false };
+  const counts = conn.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status='confirmed' THEN 1 ELSE 0 END) AS confirmed,
+      SUM(CASE WHEN status='submitted' THEN 1 ELSE 0 END) AS submitted,
+      MIN(run_id) AS proof_era_run
+    FROM attestations
+  `).get() || {};
+  // Earliest anchored run's consensus timestamp = the proof era start. Falls
+  // back to the earliest row's created time if nothing is confirmed yet.
+  const era = conn.prepare(`
+    SELECT consensus_ts, created_ts_utc
+    FROM attestations
+    ORDER BY run_id ASC
+    LIMIT 1
+  `).get() || {};
+  return {
+    available:     true,
+    network:       HEDERA_NETWORK,
+    topic_id:      HEDERA_TOPIC_ID,
+    total:         counts.total || 0,
+    confirmed:     counts.confirmed || 0,
+    submitted:     counts.submitted || 0,
+    proof_era_run: counts.proof_era_run || null,
+    proof_era_ts:  era.consensus_ts || era.created_ts_utc || null,
+  };
+}
+
 function getEquitySnapshots(limit) {
   const conn = getDb();
   if (!conn) return [];
@@ -315,6 +390,7 @@ function getLatestBridgeLog() {
              r.run_type, r.status AS run_status
       FROM bridge_logs bl
       LEFT JOIN runs r ON bl.run_id = r.run_id
+      WHERE r.run_type IS NOT 'monitor'   -- hero = full reads only; monitor runs stay in the feed
       ORDER BY bl.ts_utc DESC
       LIMIT 1
     `).get() || null;
@@ -384,6 +460,12 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
   next();
+});
+
+// Per-run read-and-verify page. Serves the dashboard shell; the client reads the
+// /run/:id path and renders that run's Bridge Log + on-chain proof + verifier.
+app.get('/run/:runId', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
 // ---------------------------------------------------------------------------
@@ -940,6 +1022,58 @@ app.get('/api/theses', (req, res) => {
     res.json({ theses: getTheses(pair, limit), ts: new Date().toISOString() });
   } catch (e) {
     console.error('[dashboard] /api/theses error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/attestations — Proof-of-Reasoning summary + recent on-chain anchors
+// ---------------------------------------------------------------------------
+// summary drives the header "Verified on Hedera" badge + proof-era line; the
+// list backs per-Bridge-Log verify links. Per-run payload (for client-side
+// re-hashing) is served by /api/attestations/:runId.
+// ---------------------------------------------------------------------------
+
+app.get('/api/attestations', (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '40', 10), 200);
+    res.json({
+      summary:      getAttestationSummary(),
+      attestations: getRecentAttestations(limit),
+    });
+  } catch (e) {
+    console.error('[dashboard] /api/attestations error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/attestations/:runId — the EXACT stored bytes + hash + HCS coordinates
+// ---------------------------------------------------------------------------
+// The verifier re-hashes `payload` and checks it against the public mirror node
+// itself — this server is never trusted to assert the result.
+// ---------------------------------------------------------------------------
+
+app.get('/api/attestations/:runId', (req, res) => {
+  try {
+    const runId = parseInt(req.params.runId, 10);
+    if (!Number.isFinite(runId)) return res.status(400).json({ error: 'bad run id' });
+    const row = getAttestationByRun(runId);
+    if (!row) return res.json({ available: false, run_id: runId });
+    res.json({
+      available:       true,
+      run_id:          row.run_id,
+      kind:            row.kind,
+      payload:         row.payload,
+      sha256:          row.sha256,
+      topic_id:        row.topic_id,
+      sequence_number: row.sequence_number,
+      consensus_ts:    row.consensus_ts,
+      status:          row.status,
+      network:         HEDERA_NETWORK,
+    });
+  } catch (e) {
+    console.error('[dashboard] /api/attestations/:runId error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

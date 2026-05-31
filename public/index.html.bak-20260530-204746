@@ -252,29 +252,6 @@
     .bridge-verify .verify-result.ok  { color: var(--teal); }
     .bridge-verify .verify-result.bad { color: var(--coral); }
 
-    /* ── Per-run proof page (/run/N) ─────────────────────────────────────── */
-    #runpage { min-height: 100vh; }
-    .rp-inner { max-width: 820px; margin: 0 auto; padding: 40px 22px 90px; }
-    .rp-back { color: var(--text-dim); font-family: var(--mono); font-size: 13px; text-decoration: none; }
-    .rp-back:hover { color: var(--teal); }
-    .rp-title { font-family: var(--mono); font-weight: 700; font-size: 26px; line-height: 1.2;
-                margin: 20px 0 4px; color: rgba(230, 237, 243, 0.95); }
-    .rp-muted { color: var(--text-muted); font-family: var(--mono); font-size: 12.5px; margin-bottom: 24px; }
-    .rp-log { white-space: pre-wrap; line-height: 1.62; font-size: 15px; color: rgba(230, 237, 243, 0.92);
-              background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border);
-              border-radius: 12px; padding: 24px; }
-    .rp-levels { margin-top: 16px; }
-    .rp-row { display: flex; gap: 12px; padding: 7px 0; font-family: var(--mono); font-size: 13px;
-              border-bottom: 1px solid var(--border); }
-    .rp-row:last-child { border-bottom: none; }
-    .rp-k { color: var(--text-muted); min-width: 92px; flex: none; }
-    .rp-hash { word-break: break-all; color: var(--text-dim); }
-    .rp-proof { margin-top: 24px; border: 1px solid var(--border); border-radius: 12px;
-                padding: 18px 22px; background: rgba(45, 212, 191, 0.045); }
-    .rp-proof-head { font-family: var(--mono); letter-spacing: 1px; text-transform: uppercase;
-                     font-size: 12px; color: var(--teal); margin-bottom: 12px; }
-    .rp-proof .bridge-verify { margin-top: 12px; }
-
     .hero-brand {
       position: absolute;
       top: 20px;
@@ -2931,91 +2908,13 @@
       }
     }
 
-    // ── Per-run proof page (/run/N) ───────────────────────────────────────
-    async function renderRunPage(runId) {
-      document.title = 'Run #' + runId + " · Capt's Ledger";
-      const wrap = document.querySelector('.wrap');
-      if (wrap) wrap.style.display = 'none';
-      const page = document.createElement('div');
-      page.id = 'runpage';
-      page.innerHTML = '<div class="rp-inner"><a class="rp-back" href="/">\u2190 Capt\u2019s Ledger</a>'
-                     + '<div class="rp-muted" style="margin-top:18px">Loading run #' + runId + '\u2026</div></div>';
-      document.body.appendChild(page);
-      const inner = page.querySelector('.rp-inner');
-
-      let att = null;
-      try { att = await fetchJson('/api/attestations/' + runId); } catch (e) { att = null; }
-
-      if (!att || !att.available) {
-        inner.innerHTML = '<a class="rp-back" href="/">\u2190 Capt\u2019s Ledger</a>'
-          + '<h1 class="rp-title">Run #' + runId + '</h1>'
-          + '<p class="rp-muted">This run isn\u2019t anchored \u2014 it may predate the proof era, '
-          + 'or no Bridge Log was filed.</p>';
-        return;
-      }
-
-      let read = {};
-      try { read = JSON.parse(att.payload); } catch (e) { read = {}; }
-      const log = read.bridge_log || '(no narration stored)';
-      const ts  = read.ts_utc ? new Date(read.ts_utc).toLocaleString() : '';
-
-      let levels = '';
-      if (read.decision && read.decision.action) {
-        const d = read.decision;
-        levels += '<div class="rp-row"><span class="rp-k">Decision</span><span>'
-          + escapeHtml(d.action)
-          + (d.pair ? ' \u00b7 ' + escapeHtml(d.pair) : '')
-          + (d.side ? ' \u00b7 ' + escapeHtml(d.side) : '')
-          + (d.size_label ? ' \u00b7 ' + escapeHtml(d.size_label) : '') + '</span></div>';
-      }
-      (read.trades || []).forEach(function (t) {
-        levels += '<div class="rp-row"><span class="rp-k">Trade</span><span>'
-          + escapeHtml((t.pair || '') + ' ' + (t.side || ''))
-          + (t.fill_price != null ? ' @ ' + escapeHtml(String(t.fill_price)) : '')
-          + (t.invalidation_price != null ? ' \u00b7 inval ' + escapeHtml(String(t.invalidation_price)) : '')
-          + (t.take_profit_price != null ? ' \u00b7 TP ' + escapeHtml(String(t.take_profit_price)) : '')
-          + '</span></div>';
-      });
-
-      const net = att.network || 'mainnet';
-      const hashscan = 'https://hashscan.io/' + net + '/topic/' + att.topic_id;
-
-      inner.innerHTML =
-          '<a class="rp-back" href="/">\u2190 Capt\u2019s Ledger</a>'
-        + '<h1 class="rp-title">Bridge Log \u00b7 Run #' + runId + '</h1>'
-        + (ts ? '<div class="rp-muted">' + escapeHtml(ts) + '</div>' : '<div class="rp-muted"></div>')
-        + '<div class="rp-log">' + escapeHtml(log) + '</div>'
-        + (levels ? '<div class="rp-levels">' + levels + '</div>' : '')
-        + '<div class="rp-proof">'
-        +   '<div class="rp-proof-head">\u26D3 Proof of Reasoning</div>'
-        +   '<div class="rp-row"><span class="rp-k">Topic</span><span>' + escapeHtml(att.topic_id || '\u2014') + '</span></div>'
-        +   '<div class="rp-row"><span class="rp-k">Sequence</span><span>' + (att.sequence_number != null ? '#' + att.sequence_number : '\u2014') + '</span></div>'
-        +   '<div class="rp-row"><span class="rp-k">SHA-256</span><span class="rp-hash">' + escapeHtml(att.sha256 || '\u2014') + '</span></div>'
-        +   '<div class="rp-row"><span class="rp-k">On chain</span><span><a href="' + hashscan + '" target="_blank" rel="noopener">HashScan \u2197</a></span></div>'
-        +   '<div class="bridge-verify" id="rp-verify"></div>'
-        + '</div>';
-
-      const vbox = inner.querySelector('#rp-verify');
-      vbox.innerHTML = '<button class="verify-btn" type="button">\u26D3 Verify on Hedera</button>'
-                     + '<span class="verify-result"></span>';
-      const btn = vbox.querySelector('.verify-btn');
-      const out = vbox.querySelector('.verify-result');
-      btn.addEventListener('click', function () { runVerify(runId, btn, out); });
-      runVerify(runId, btn, out);   // auto-verify on load
-    }
-
-    const _runMatch = location.pathname.match(/^\/run\/(\d+)/);
-    if (_runMatch) {
-      renderRunPage(parseInt(_runMatch[1], 10));
-    } else {
-      refreshLive();
-      refreshHistory();
-      initThesisChart();
-      refreshThesisChart();
-      setInterval(refreshLive, 15_000);
-      setInterval(refreshHistory, 60_000);
-      setInterval(refreshThesisChart, 60_000);
-    }
+    refreshLive();
+    refreshHistory();
+    initThesisChart();
+    refreshThesisChart();
+    setInterval(refreshLive, 15_000);
+    setInterval(refreshHistory, 60_000);
+    setInterval(refreshThesisChart, 60_000);
   </script>
 </body>
 </html>
